@@ -4,9 +4,9 @@ from analysis.rate_analysis import compute_rate_of_change
 from analysis.classification import classify_series
 
 
-def run_reasoning_engine():
+def run_reasoning_engine(user_id):
     # Load data
-    df = load_and_prepare_data()
+    df = load_and_prepare_data(user_id)
 
     # Smooth data
     smoothed = apply_rolling_average(df)
