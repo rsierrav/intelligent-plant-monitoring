@@ -19,9 +19,9 @@ plant_b = df[df['plant_id'] == '639b7e57-2d84-477d-89fb-5a961f6d1dd8']
 # Create plot
 fig, ax = plt.subplots(figsize=(10, 5))
 
-ax.plot(plant_a['timestamp'], plant_a['soil_moisture_percent'], 
+ax.plot(plant_a['timestamp'], plant_a['soil_moisture_percent'],
         label='Plant A', linewidth=2)
-ax.plot(plant_b['timestamp'], plant_b['soil_moisture_percent'], 
+ax.plot(plant_b['timestamp'], plant_b['soil_moisture_percent'],
         label='Plant B', linewidth=2)
 
 ax.grid(True, linestyle='--', alpha=0.5)
