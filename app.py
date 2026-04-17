@@ -19,6 +19,8 @@ from analysis.preprocessing import (
 load_dotenv()
 
 THRESHOLD = 40
+FORECAST_WINDOW_MINUTES = 60
+FORECAST_HORIZON_HOURS = 72
 
 
 def to_minutes(ts):
@@ -53,12 +55,18 @@ def build_prediction_line(series, slope, intercept, horizon_minutes):
         return None, None
 
     last_time = s.index[-1]
-    periods = max(2, int(horizon_minutes / 5) + 1)
+    periods = max(2, int(np.ceil(horizon_minutes / 5.0)))
     future_times = pd.date_range(
         start=last_time + pd.Timedelta(minutes=5),
         periods=periods,
         freq="5min",
     )
+
+    # Include the exact horizon endpoint so threshold crossings are visible.
+    horizon_end = last_time + pd.Timedelta(minutes=float(horizon_minutes))
+    if future_times.empty or future_times[-1] < horizon_end:
+        future_times = future_times.append(pd.DatetimeIndex([horizon_end]))
+
     x_future = (future_times - s.index[0]).total_seconds() / 60.0
     y_future = slope * x_future + intercept
     return future_times, y_future
@@ -78,11 +86,17 @@ def predict_plant(series, horizon_minutes):
     current = s.iloc[-1]
     last_time = s.index[-1]
     minutes = time_to_threshold(current, slope)
+
+    # If we're drying, always extend the projection enough to reach 40%.
+    effective_horizon = horizon_minutes
+    if minutes is not None:
+        effective_horizon = max(horizon_minutes, float(minutes))
+
     future_t, future_y = build_prediction_line(
         s,
         slope,
         intercept,
-        horizon_minutes,
+        effective_horizon,
     )
 
     eta_to_40 = None
@@ -344,22 +358,8 @@ col2.metric(
     decision["Plant_B"],
 )
 
-window_minutes = 60
-forecast_horizon_hours = st.slider(
-    "Forecast horizon (hours)",
-    min_value=6,
-    max_value=120,
-    value=72,
-    step=6,
-)
-if st.checkbox("Advanced Settings"):
-    window_minutes = st.slider(
-        "Forecast window (minutes)",
-        min_value=30,
-        max_value=60,
-        value=60,
-        step=5,
-    )
+window_minutes = FORECAST_WINDOW_MINUTES
+forecast_horizon_hours = FORECAST_HORIZON_HOURS
 
 now = df.index.max()
 recent = df[df.index >= now - pd.Timedelta(minutes=window_minutes)]
@@ -374,6 +374,10 @@ pred_B = predict_plant(recent["Plant_B"], forecast_horizon_minutes)
 st.subheader("Forecast")
 st.write(format_prediction(pred_A, "Plant A"))
 st.write(format_prediction(pred_B, "Plant B"))
+st.caption(
+    "Forecast is calculated automatically from the latest "
+    "60 minutes of data."
+)
 
 fig, ax = plt.subplots(figsize=(10, 5))
 
@@ -391,31 +395,33 @@ ax.plot(
 )
 
 if pred_A is not None and pred_A["future_t"] is not None:
+    y_future_a = np.clip(pred_A["future_y"], 0, 100)
     ax.plot(
         pred_A["future_t"],
-        pred_A["future_y"],
+        y_future_a,
         linestyle=":",
         linewidth=2,
         label="Plant A Forecast",
     )
     ax.text(
         pred_A["future_t"][-1],
-        pred_A["future_y"][-1],
+        y_future_a[-1],
         "A",
         color="blue",
     )
 
 if pred_B is not None and pred_B["future_t"] is not None:
+    y_future_b = np.clip(pred_B["future_y"], 0, 100)
     ax.plot(
         pred_B["future_t"],
-        pred_B["future_y"],
+        y_future_b,
         linestyle=":",
         linewidth=2,
         label="Plant B Forecast",
     )
     ax.text(
         pred_B["future_t"][-1],
-        pred_B["future_y"][-1],
+        y_future_b[-1],
         "B",
         color="orange",
     )
@@ -435,20 +441,41 @@ ax.scatter(
     latest_raw["Plant_A"]["moisture"],
     color="blue",
     s=80,
-    zorder=5,
+    # zorder=5,
 )
 ax.scatter(
     latest_raw["Plant_B"]["timestamp"],
     latest_raw["Plant_B"]["moisture"],
     color="orange",
     s=80,
-    zorder=5,
+    # zorder=5,
 )
 
 ax.grid(True, alpha=0.5)
 ax.set_xlabel("Time")
 ax.set_ylabel("Moisture %")
 ax.set_title("Moisture Trend & Short-Term Forecast")
+
+# Keep the plot vertically tight so the trend sits closer to the x-axis.
+y_candidates = []
+for col in ["Plant_A", "Plant_B"]:
+    y_candidates.extend(smoothed[col].dropna().tolist())
+
+if pred_A is not None and pred_A["future_y"] is not None:
+    y_candidates.extend(np.clip(pred_A["future_y"], 0, 100).tolist())
+if pred_B is not None and pred_B["future_y"] is not None:
+    y_candidates.extend(np.clip(pred_B["future_y"], 0, 100).tolist())
+
+y_candidates.append(THRESHOLD)
+if y_candidates:
+    y_max = min(100, max(y_candidates) + 3)
+    if y_max < 6:
+        y_max = 6
+    ax.set_ylim(0, y_max)
+
+# Remove extra side padding so time-series starts at the edge of the axis.
+ax.margins(x=0)
+
 ax.legend()
 
 fig.autofmt_xdate()
