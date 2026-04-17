@@ -16,4 +16,4 @@ PlantMonitoringBoard/.vscode/.browse.c_cpp.db*
 PlantMonitoringBoard/.vscode/c_cpp_properties.json
 PlantMonitoringBoard/.vscode/launch.json
 PlantMonitoringBoard/.vscode/ipch
-PlantMonitoringBoard/.src/secrets.h
+secrets.h
