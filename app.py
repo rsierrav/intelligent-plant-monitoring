@@ -21,6 +21,7 @@ load_dotenv()
 THRESHOLD = 40
 FORECAST_WINDOW_MINUTES = 60
 FORECAST_HORIZON_HOURS = 72
+WATERING_JUMP_THRESHOLD = 6.0
 
 
 def to_minutes(ts):
@@ -49,12 +50,10 @@ def time_to_threshold(current_value, slope):
     return minutes
 
 
-def build_prediction_line(series, slope, intercept, horizon_minutes):
-    s = series.dropna()
-    if s.empty:
+def build_prediction_line(last_time, current_value, slope, horizon_minutes):
+    if slope is None:
         return None, None
 
-    last_time = s.index[-1]
     periods = max(2, int(np.ceil(horizon_minutes / 5.0)))
     future_times = pd.date_range(
         start=last_time + pd.Timedelta(minutes=5),
@@ -67,9 +66,79 @@ def build_prediction_line(series, slope, intercept, horizon_minutes):
     if future_times.empty or future_times[-1] < horizon_end:
         future_times = future_times.append(pd.DatetimeIndex([horizon_end]))
 
-    x_future = (future_times - s.index[0]).total_seconds() / 60.0
-    y_future = slope * x_future + intercept
+    minutes_from_now = (
+        (future_times - last_time).total_seconds() / 60.0
+    )
+    y_future = current_value + slope * minutes_from_now
     return future_times, y_future
+
+
+def _get_cycle_start_times(series):
+    s = series.dropna()
+    if len(s) < 3:
+        return [s.index[0]] if len(s) else []
+
+    # A large positive jump usually indicates a watering/refill event.
+    jump_times = s.diff()[lambda x: x >= WATERING_JUMP_THRESHOLD].index
+    starts = [s.index[0]] + list(jump_times)
+
+    deduped = []
+    for ts in starts:
+        if not deduped or ts != deduped[-1]:
+            deduped.append(ts)
+    return deduped
+
+
+def _historical_slope_estimate(series):
+    s = series.dropna()
+    if len(s) < 10:
+        return None, None
+
+    starts = _get_cycle_start_times(s)
+    if not starts:
+        return None, None
+
+    current_start = starts[-1]
+    current_cycle = s[s.index >= current_start]
+
+    # Recent trend keeps responsiveness to abrupt environment changes.
+    recent = s[
+        s.index
+        >= s.index[-1] - pd.Timedelta(minutes=FORECAST_WINDOW_MINUTES)
+    ]
+    if len(recent) < 5:
+        recent = s.tail(20)
+    recent_slope, _ = fit_linear(recent)
+
+    current_slope, _ = fit_linear(current_cycle)
+
+    cycle_slopes = []
+    for i in range(len(starts) - 1):
+        seg = s[(s.index >= starts[i]) & (s.index < starts[i + 1])]
+        if len(seg) < 6:
+            continue
+        seg_slope, _ = fit_linear(seg)
+        if seg_slope is not None:
+            cycle_slopes.append(seg_slope)
+
+    historical_slope = None
+    if cycle_slopes:
+        historical_slope = float(np.median(cycle_slopes))
+
+    weighted = []
+    if recent_slope is not None:
+        weighted.append((recent_slope, 0.45))
+    if current_slope is not None:
+        weighted.append((current_slope, 0.35))
+    if historical_slope is not None:
+        weighted.append((historical_slope, 0.20))
+
+    if not weighted:
+        return None, current_cycle
+
+    total_w = sum(w for _, w in weighted)
+    blended_slope = sum(v * w for v, w in weighted) / total_w
+    return blended_slope, current_cycle
 
 
 def predict_plant(series, horizon_minutes):
@@ -79,7 +148,10 @@ def predict_plant(series, horizon_minutes):
         if len(s) < 5:
             return None
 
-    slope, intercept = fit_linear(s)
+    slope, _ = _historical_slope_estimate(s)
+    if slope is None:
+        slope, _ = fit_linear(s.tail(20))
+
     if slope is None:
         return None
 
@@ -93,9 +165,9 @@ def predict_plant(series, horizon_minutes):
         effective_horizon = max(horizon_minutes, float(minutes))
 
     future_t, future_y = build_prediction_line(
-        s,
+        last_time,
+        current,
         slope,
-        intercept,
         effective_horizon,
     )
 
@@ -358,25 +430,18 @@ col2.metric(
     decision["Plant_B"],
 )
 
-window_minutes = FORECAST_WINDOW_MINUTES
 forecast_horizon_hours = FORECAST_HORIZON_HOURS
 
-now = df.index.max()
-recent = df[df.index >= now - pd.Timedelta(minutes=window_minutes)]
-
-if len(recent.dropna()) < 5:
-    recent = df.tail(50)
-
 forecast_horizon_minutes = forecast_horizon_hours * 60
-pred_A = predict_plant(recent["Plant_A"], forecast_horizon_minutes)
-pred_B = predict_plant(recent["Plant_B"], forecast_horizon_minutes)
+pred_A = predict_plant(df["Plant_A"], forecast_horizon_minutes)
+pred_B = predict_plant(df["Plant_B"], forecast_horizon_minutes)
 
 st.subheader("Forecast")
 st.write(format_prediction(pred_A, "Plant A"))
 st.write(format_prediction(pred_B, "Plant B"))
 st.caption(
-    "Forecast is calculated automatically from the latest "
-    "60 minutes of data."
+    "Forecast blends recent trend with full historical "
+    "watering-cycle behavior."
 )
 
 fig, ax = plt.subplots(figsize=(10, 5))
