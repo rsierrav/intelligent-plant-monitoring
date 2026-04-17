@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+
+.env
+
+data/raw/
+data/processed/
+
+.DS_Store
+Thumbs.db
+
+.vscode/
+
+PlantMonitoringBoard/
