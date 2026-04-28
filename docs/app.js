@@ -20,7 +20,7 @@ let autoRefreshEnabled = false;
 let blinkInterval = null;
 let blinkOn = true;
 // track last seen per-plant timestamps from /dashboard/latest
-let lastSeenTimestamp = { Plant_A: null, Plant_B: null };
+let lastSeenTimestamp = {};
 
 // ============ AUTH FUNCTIONS ============
 
@@ -180,19 +180,14 @@ async function pollLatestForChanges() {
     const res = await fetch(`${API_URL}/dashboard/latest?user_id=${currentUser.id}`);
     if (!res.ok) return;
     const data = await res.json();
-    const a = data.latest?.Plant_A?.timestamp ?? null;
-    const b = data.latest?.Plant_B?.timestamp ?? null;
-
-    // If either timestamp is new, trigger a full load
-    if (a && a !== lastSeenTimestamp.Plant_A) {
-      lastSeenTimestamp.Plant_A = a;
-      load();
-      return;
-    }
-    if (b && b !== lastSeenTimestamp.Plant_B) {
-      lastSeenTimestamp.Plant_B = b;
-      load();
-      return;
+    const latestMap = data.latest || {};
+    for (const alias of Object.keys(latestMap)) {
+      const ts = latestMap[alias]?.timestamp ?? null;
+      if (ts && ts !== lastSeenTimestamp[alias]) {
+        lastSeenTimestamp[alias] = ts;
+        load();
+        return;
+      }
     }
   } catch (err) {
     // ignore polling errors; full load will surface failures
@@ -349,21 +344,29 @@ async function fetchLatestOnly() {
     const res = await fetch(`${API_URL}/dashboard/latest?user_id=${currentUser.id}`);
     if (!res.ok) return;
     const data = await res.json();
-    const latestA = data.latest?.Plant_A;
-    const latestB = data.latest?.Plant_B;
-
-    if (latestA) {
-      document.getElementById("valueA").innerText = `${latestA.moisture}%`;
-      if (latestA.light !== undefined) document.getElementById("lightA").innerText = `${Number(latestA.light).toFixed(1)} lux`;
-      if (latestA.temperature !== undefined) document.getElementById("tempA").innerText = `${Number(latestA.temperature).toFixed(1)} °C`;
-      if (latestA.humidity !== undefined) document.getElementById("humidityA").innerText = `${Number(latestA.humidity).toFixed(1)} %`;
-    }
-    if (latestB) {
-      document.getElementById("valueB").innerText = `${latestB.moisture}%`;
-      if (latestB.light !== undefined) document.getElementById("lightB").innerText = `${Number(latestB.light).toFixed(1)} lux`;
-      if (latestB.temperature !== undefined) document.getElementById("tempB").innerText = `${Number(latestB.temperature).toFixed(1)} °C`;
-      if (latestB.humidity !== undefined) document.getElementById("humidityB").innerText = `${Number(latestB.humidity).toFixed(1)} %`;
-    }
+    const latestMap = data.latest || {};
+    Object.keys(latestMap).forEach((alias) => {
+      const latest = latestMap[alias];
+      const suffix = `_${alias}`;
+      const valueEl = document.getElementById(`value${suffix}`);
+      if (valueEl) {
+        valueEl.innerText = latest && latest.moisture != null ? `${latest.moisture}%` : "--%";
+      }
+      if (latest) {
+        if (latest.light !== undefined) {
+          const el = document.getElementById(`light${suffix}`);
+          if (el) el.innerText = `${Number(latest.light).toFixed(1)} lux`;
+        }
+        if (latest.temperature !== undefined) {
+          const el = document.getElementById(`temp${suffix}`);
+          if (el) el.innerText = `${Number(latest.temperature).toFixed(1)} °C`;
+        }
+        if (latest.humidity !== undefined) {
+          const el = document.getElementById(`humidity${suffix}`);
+          if (el) el.innerText = `${Number(latest.humidity).toFixed(1)} %`;
+        }
+      }
+    });
 
     lastUpdateTime = new Date();
     updateStatusBar("live");
@@ -379,35 +382,39 @@ async function fetchSummaryOnly() {
     const res = await fetch(`${API_URL}/dashboard/summary?user_id=${currentUser.id}`);
     if (!res.ok) return;
     const data = await res.json();
+    // Build forecast summary text for up to two plants
+    const plants = data.plants || [];
+    if (plants.length === 0) return;
 
-    const predA = data.prediction?.Plant_A;
-    const predB = data.prediction?.Plant_B;
-    const latestA = data.latest?.Plant_A;
-    const latestB = data.latest?.Plant_B;
+    const aliases = plants.map(p => p.alias);
+    const first = aliases[0];
+    const second = aliases[1];
 
-    if (predA && predB) {
-      document.getElementById("forecastText").innerText =
-        `Plant A: ~${predA.eta_hours?.toFixed(1)} hours until dry\nPlant B: ~${predB.eta_hours?.toFixed(1)} hours until dry`;
+    const pred1 = data.prediction?.[first];
+    const pred2 = data.prediction?.[second];
 
-      const futureOnlyA = (predA.forecast || []).map((p) => ({ x: new Date(p.t), y: p.value }));
-      const futureOnlyB = (predB.forecast || []).map((p) => ({ x: new Date(p.t), y: p.value }));
+    let forecastText = "";
+    if (pred1) forecastText += `${plants[0].plant_name}: ~${pred1.eta_hours?.toFixed(1)} hours until dry`;
+    if (pred2) forecastText += `\n${plants[1].plant_name}: ~${pred2.eta_hours?.toFixed(1)} hours until dry`;
+    document.getElementById("forecastText").innerText = forecastText;
 
-      const livePointA = latestA && latestA.timestamp ? [{ x: new Date(latestA.timestamp), y: latestA.moisture }] : [];
-      const livePointB = latestB && latestB.timestamp ? [{ x: new Date(latestB.timestamp), y: latestB.moisture }] : [];
+    try {
+      const futureOnly1 = (pred1?.forecast || []).map((p) => ({ x: new Date(p.t), y: p.value }));
+      const futureOnly2 = (pred2?.forecast || []).map((p) => ({ x: new Date(p.t), y: p.value }));
 
-      // Create a visual break after the live point so the dotted forecast starts cleanly.
-      const forecastDataA = livePointA.length
-        ? [{ x: livePointA[0].x, y: null }, ...futureOnlyA]
-        : futureOnlyA;
-      const forecastDataB = livePointB.length
-        ? [{ x: livePointB[0].x, y: null }, ...futureOnlyB]
-        : futureOnlyB;
+      const latest1 = data.latest?.[first];
+      const latest2 = data.latest?.[second];
+      const livePoint1 = latest1 && latest1.timestamp ? [{ x: new Date(latest1.timestamp), y: latest1.moisture }] : [];
+      const livePoint2 = latest2 && latest2.timestamp ? [{ x: new Date(latest2.timestamp), y: latest2.moisture }] : [];
 
-      // minimal datasets: forecasts + live points + threshold
+      const forecastData1 = livePoint1.length ? [{ x: livePoint1[0].x, y: null }, ...futureOnly1] : futureOnly1;
+      const forecastData2 = livePoint2.length ? [{ x: livePoint2[0].x, y: null }, ...futureOnly2] : futureOnly2;
+
+      // minimal datasets for forecasts + live + threshold
       const datasets = [
         {
-          label: "Plant A Forecast",
-          data: forecastDataA,
+          label: `${plants[0].plant_name} Forecast`,
+          data: forecastData1,
           borderColor: "#3b82f6",
           borderDash: [5, 5],
           borderWidth: 2,
@@ -421,8 +428,8 @@ async function fetchSummaryOnly() {
           parsing: true
         },
         {
-          label: "Plant B Forecast",
-          data: forecastDataB,
+          label: `${plants[1]?.plant_name || 'Plant'} Forecast`,
+          data: forecastData2,
           borderColor: "#f97316",
           borderDash: [5, 5],
           borderWidth: 2,
@@ -436,8 +443,8 @@ async function fetchSummaryOnly() {
           parsing: true
         },
         {
-          label: "Plant A Live",
-          data: livePointA,
+          label: `${plants[0].plant_name} Live`,
+          data: livePoint1,
           borderColor: "#3b82f6",
           backgroundColor: "#3b82f6",
           showLine: false,
@@ -451,8 +458,8 @@ async function fetchSummaryOnly() {
           order: 1
         },
         {
-          label: "Plant B Live",
-          data: livePointB,
+          label: `${plants[1]?.plant_name || 'Plant'} Live`,
+          data: livePoint2,
           borderColor: "#f97316",
           backgroundColor: "#f97316",
           showLine: false,
@@ -482,8 +489,6 @@ async function fetchSummaryOnly() {
         }
       ];
 
-      // If chart exists and already contains history, don't overwrite full chart here;
-      // otherwise create/update a minimal forecast-only chart so user sees dotted lines immediately.
       if (!chart) {
         const ctx = document.getElementById("chart").getContext("2d");
         chart = new Chart(ctx, {
@@ -493,14 +498,11 @@ async function fetchSummaryOnly() {
         });
         startBlink();
       } else {
-        // If chart already has history datasets, merge forecast/live/threshold
-        // into it instead of replacing everything (preserve history for hover).
-        const hasHistory = chart.data.datasets.some((ds) => ds.label === "Plant A" || ds.label === "Plant B");
+        const hasHistory = chart.data.datasets.some((ds) => ds.label === plants[0].plant_name || ds.label === plants[1]?.plant_name);
         if (hasHistory) {
           datasets.forEach((newDs) => {
             const idx = chart.data.datasets.findIndex((ds) => ds.label === newDs.label);
             if (idx >= 0) {
-              // replace data and a few display props
               chart.data.datasets[idx].data = newDs.data;
               chart.data.datasets[idx].borderDash = newDs.borderDash;
               chart.data.datasets[idx].borderColor = newDs.borderColor;
@@ -514,12 +516,13 @@ async function fetchSummaryOnly() {
           chart.update("none");
           startBlink();
         } else {
-          // No history present: replace entire datasets (minimal chart)
           chart.data.datasets = datasets;
           chart.update("none");
           startBlink();
         }
       }
+    } catch (err) {
+      // ignore forecast rendering errors
     }
   } catch (err) {
     // ignore; full load will populate everything
@@ -539,14 +542,8 @@ async function load() {
     lastUpdateTime = new Date();
     updateStatusBar("live");
 
-    const A = data.prediction.Plant_A;
-    const B = data.prediction.Plant_B;
-
-    const latestA = data.latest.Plant_A;
-    const latestB = data.latest.Plant_B;
-
-    const hasNoPlants = !latestA && !latestB;
-    if (hasNoPlants) {
+    const plants = data.plants || [];
+    if (!plants.length) {
       const firstSection = document.querySelector(".section");
       if (firstSection) {
         firstSection.innerHTML = `
@@ -560,17 +557,47 @@ async function load() {
       return;
     }
 
-    // Get historical data
-    const historyA = data.history.Plant_A || [];
-    const historyB = data.history.Plant_B || [];
+    // Render plant cards dynamically
+    const firstSection = document.querySelector(".section");
+    if (!firstSection) return;
 
-    updatePlant("A", data.decision.Plant_A, latestA.moisture, A, latestA);
-    updatePlant("B", data.decision.Plant_B, latestB.moisture, B, latestB);
+    const cardsHtml = plants
+      .map((p) => {
+        const alias = p.alias;
+        const safe = `_${alias}`;
+        return `
+          <div class="card">
+            <div style="display:flex; justify-content:space-between; align-items:center">
+              <h3>${p.plant_name}</h3>
+              <span id="status_${alias}" class="badge">${"No data yet"}</span>
+            </div>
+            <div style="font-size:28px; margin-top:8px">Moisture: <span id="value_${alias}">--%</span></div>
+            <div style="margin-top:8px">ETA: <span id="eta_${alias}">N/A</span></div>
+            <div style="margin-top:8px; font-size:12px; color:#666">Sensors: Light <span id="light_${alias}">-</span> • Temp <span id="temp_${alias}">-</span> • Humidity <span id="humidity_${alias}">-</span></div>
+          </div>
+        `;
+      })
+      .join("\n");
 
-    document.getElementById("forecastText").innerText =
-      `Plant A: ~${A.eta_hours?.toFixed(1)} hours until dry\nPlant B: ~${B.eta_hours?.toFixed(1)} hours until dry`;
+    firstSection.innerHTML = cardsHtml;
 
-    buildChart(historyA, A.forecast, historyB, B.forecast);
+    // Populate each plant's data
+    plants.forEach((p) => {
+      const alias = p.alias;
+      const latest = data.latest?.[alias] || null;
+      const pred = data.prediction?.[alias] || {};
+      const decision = data.decision?.[alias] || "No data yet";
+      updatePlant(alias, decision, latest?.moisture, pred, latest);
+    });
+
+    // Build chart for up to two plants (fallback to first two)
+    const chartPlants = plants.slice(0, 2);
+    const history0 = data.history?.[chartPlants[0].alias] || [];
+    const forecast0 = data.prediction?.[chartPlants[0].alias]?.forecast || [];
+    const history1 = chartPlants[1] ? (data.history?.[chartPlants[1].alias] || []) : [];
+    const forecast1 = chartPlants[1] ? (data.prediction?.[chartPlants[1].alias]?.forecast || []) : [];
+
+    buildChart(history0, forecast0, history1, forecast1);
   } catch (error) {
     console.error("Failed to load dashboard:", error);
     updateStatusBar("offline");
@@ -608,24 +635,35 @@ setInterval(() => {
 }, 10000);
 
 function updatePlant(id, status, moisture, pred, sensorData) {
-  document.getElementById(`value${id}`).innerText = `${moisture}%`;
+  const suffix = `_${id}`;
+  const valueEl = document.getElementById(`value${suffix}`);
+  if (valueEl) {
+    if (moisture === null || moisture === undefined) {
+      valueEl.innerText = "--%";
+    } else {
+      valueEl.innerText = `${moisture}%`;
+    }
+  }
 
   // Update sensor data if available
   const light = sensorData?.light ?? sensorData?.light_intensity;
   const temp = sensorData?.temperature;
   const humidity = sensorData?.humidity;
 
-  if (light !== undefined) {
-    document.getElementById(`light${id}`).innerText = `${light.toFixed(1)} lux`;
+  if (light !== undefined && !Number.isNaN(Number(light))) {
+    const el = document.getElementById(`light${suffix}`);
+    if (el) el.innerText = `${Number(light).toFixed(1)} lux`;
   }
-  if (temp !== undefined) {
-    document.getElementById(`temp${id}`).innerText = `${temp.toFixed(1)} °C`;
+  if (temp !== undefined && !Number.isNaN(Number(temp))) {
+    const el = document.getElementById(`temp${suffix}`);
+    if (el) el.innerText = `${Number(temp).toFixed(1)} °C`;
   }
-  if (humidity !== undefined) {
-    document.getElementById(`humidity${id}`).innerText = `${humidity.toFixed(1)} %`;
+  if (humidity !== undefined && !Number.isNaN(Number(humidity))) {
+    const el = document.getElementById(`humidity${suffix}`);
+    if (el) el.innerText = `${Number(humidity).toFixed(1)} %`;
   }
 
-  const badge = document.getElementById(`status${id}`);
+  const badge = document.getElementById(`status_${id}`);
   badge.innerText = status;
   badge.className = "badge";
 
@@ -641,8 +679,8 @@ function updatePlant(id, status, moisture, pred, sensorData) {
     ? new Date(pred.eta_to_40).toLocaleString()
     : "N/A";
 
-  document.getElementById(`eta${id}`).innerText =
-    `${pred.eta_hours?.toFixed(1)} hrs (~${eta})`;
+  const etaEl = document.getElementById(`eta_${id}`);
+  if (etaEl) etaEl.innerText = `${pred.eta_hours?.toFixed(1)} hrs (~${eta})`;
 }
 
 function buildChart(historyA, forecastA, historyB, forecastB) {

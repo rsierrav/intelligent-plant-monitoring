@@ -84,55 +84,126 @@ def resolve_user_id():
 
 
 def empty_latest_payload():
-    return {
-        "Plant_A": None,
-        "Plant_B": None,
-    }
+    # Deprecated: callers should use empty_dashboard_payload which returns
+    # fully empty structures. Keep for compatibility.
+    return {}
 
 
 def empty_dashboard_payload():
     return {
-        "latest": empty_latest_payload(),
+        "plants": [],
+        "latest": {},
         "decision": {},
-        "history": {
-            "Plant_A": [],
-            "Plant_B": [],
-        },
-        "prediction": {
-            "Plant_A": {},
-            "Plant_B": {},
-        },
+        "history": {},
+        "prediction": {},
     }
 
 
+def get_user_plants(user_id):
+    """Return list of plant records for a given user."""
+    try:
+        response = (
+            supabase_client.table("plants")
+            .select("id, plant_name, plant_type, user_id")
+            .eq("user_id", user_id)
+            .order("plant_name", desc=False)
+            .execute()
+        )
+        return response.data or []
+    except Exception:
+        return []
+
+
 def build_dashboard_payload(user_id):
+    # Ensure we return plant entities only for plants that belong to the user
+    plants = get_user_plants(user_id)
+    if not plants:
+        return empty_dashboard_payload()
+
+    # Use preprocessing's alias map so keys in latest/history/prediction match
+    from analysis.preprocessing import _build_plant_alias_map
+
+    alias_map = _build_plant_alias_map(user_id) or {}
+
+    base_latest = {}
+    base_history = {}
+    base_prediction = {}
+    base_decision = {}
+    plants_meta = []
+
+    # Respect the order of plants returned from the DB and include only those
+    for idx, plant in enumerate(plants):
+        plant_id = plant.get("id")
+        alias = alias_map.get(plant_id) or f"Plant_{idx+1}"
+        base_latest[alias] = None
+        base_history[alias] = []
+        base_prediction[alias] = {}
+        base_decision[alias] = "No data yet"
+        plants_meta.append({
+            "alias": alias,
+            "id": plant_id,
+            "plant_name": plant.get("plant_name"),
+            "plant_type": plant.get("plant_type"),
+        })
+
+    # Try to compute actual analytics; if it fails, return the base payload
     try:
         df, smoothed, rate, states = run_reasoning_engine(user_id)
 
         decision = get_latest_decision(states)
         latest = get_latest_raw_moisture_by_plant(user_id)
 
-        pred_A = predict_plant(df["Plant_A"], FORECAST_HORIZON_MINUTES)
-        pred_B = predict_plant(df["Plant_B"], FORECAST_HORIZON_MINUTES)
+        # Build payload keyed by actual aliases we discovered from DB
+        payload_latest = {}
+        payload_history = {}
+        payload_prediction = {}
 
-        # Extract historical data (default 30 days) for chart context.
-        history_A = format_history(df, "Plant_A", hours=HISTORY_HOURS)
-        history_B = format_history(df, "Plant_B", hours=HISTORY_HOURS)
+        for alias in base_latest.keys():
+            if isinstance(latest, dict):
+                payload_latest[alias] = latest.get(alias)
+            else:
+                payload_latest[alias] = None
 
-        return {
-            "latest": latest,
-            "decision": decision,
-            "history": {
-                "Plant_A": history_A,
-                "Plant_B": history_B
-            },
-            "prediction": {
-                "Plant_A": pred_A,
-                "Plant_B": pred_B
-            }
+            if alias in df.columns:
+                payload_history[alias] = format_history(
+                    df,
+                    alias,
+                    hours=HISTORY_HOURS,
+                )
+                payload_prediction[alias] = predict_plant(
+                    df.get(alias),
+                    FORECAST_HORIZON_MINUTES,
+                )
+            else:
+                payload_history[alias] = []
+                payload_prediction[alias] = {}
+
+        # Merge decision values, falling back to base_decision
+        merged_decision = {}
+        for k in base_decision.keys():
+            if isinstance(decision, dict):
+                merged_decision[k] = decision.get(k)
+            else:
+                merged_decision[k] = base_decision.get(k)
+
+        payload = {
+            "plants": plants_meta,
+            "latest": payload_latest,
+            "decision": merged_decision,
+            "history": payload_history,
+            "prediction": payload_prediction,
         }
+
+        return payload
     except ValueError:
-        return empty_dashboard_payload()
+        base = {
+            "plants": plants_meta,
+            "latest": base_latest,
+            "decision": base_decision,
+            "history": base_history,
+            "prediction": base_prediction,
+        }
+        return base
 
 
 def get_cached_dashboard_payload(user_id):
