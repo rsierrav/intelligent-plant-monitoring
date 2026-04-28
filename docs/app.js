@@ -143,6 +143,35 @@ function showDashboard() {
   load();
 }
 
+async function openAddPlant() {
+  const plantName = prompt("Enter plant name:");
+  const plantType = prompt("Enter plant type:");
+
+  if (!plantName) {
+    return;
+  }
+
+  try {
+    const res = await fetch(`${API_URL}/plants/create`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        user_id: currentUser.id,
+        plant_name: plantName,
+        plant_type: plantType,
+      }),
+    });
+
+    if (!res.ok) {
+      throw new Error("Failed to create plant");
+    }
+
+    location.reload();
+  } catch (err) {
+    showAuthError(err.message || "Could not create plant");
+  }
+}
+
 // ============ END AUTH FUNCTIONS ============
 
 // Poll /dashboard/latest and only call full `load()` when timestamps change.
@@ -500,6 +529,10 @@ async function fetchSummaryOnly() {
 async function load() {
   try {
     const res = await fetch(`${API_URL}/dashboard?user_id=${currentUser.id}`);
+    if (!res.ok) {
+      throw new Error("Dashboard request failed");
+    }
+
     const data = await res.json();
 
     // Update last update time
@@ -511,6 +544,21 @@ async function load() {
 
     const latestA = data.latest.Plant_A;
     const latestB = data.latest.Plant_B;
+
+    const hasNoPlants = !latestA && !latestB;
+    if (hasNoPlants) {
+      const firstSection = document.querySelector(".section");
+      if (firstSection) {
+        firstSection.innerHTML = `
+          <div class="card" style="text-align:center; padding:40px;">
+            <h2>No Plants Yet</h2>
+            <p>Add a plant to start monitoring moisture.</p>
+            <button onclick="openAddPlant()">+ Add Plant</button>
+          </div>
+        `;
+      }
+      return;
+    }
 
     // Get historical data
     const historyA = data.history.Plant_A || [];
@@ -549,11 +597,11 @@ function updateStatusBar(status) {
   }
 }
 
-// Monitor connection status (mark as stale if no update for 60 seconds)
+// Monitor connection status (mark as stale if no update for 180 seconds)
 setInterval(() => {
   if (lastUpdateTime) {
     const secondsAgo = (new Date() - lastUpdateTime) / 1000;
-    if (secondsAgo > 60) {
+    if (secondsAgo > 180) {
       updateStatusBar("stale");
     }
   }

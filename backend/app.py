@@ -1,4 +1,5 @@
 import os
+import time
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS
@@ -28,6 +29,8 @@ FORECAST_HORIZON_MINUTES = max(
     MIN_FORECAST_MINUTES,
     int(os.getenv("DASHBOARD_FORECAST_MINUTES", str(MIN_FORECAST_MINUTES)))
 )
+CACHE_TTL_SECONDS = int(os.getenv("DASHBOARD_CACHE_TTL_SECONDS", "10"))
+dashboard_cache = {}
 
 
 def format_history(df_historical, plant_name, hours=48):
@@ -102,12 +105,7 @@ def empty_dashboard_payload():
     }
 
 
-@app.route("/dashboard")
-def dashboard():
-    user_id = resolve_user_id()
-    if not user_id:
-        return jsonify({"error": "user_id is required"}), 400
-
+def build_dashboard_payload(user_id):
     try:
         df, smoothed, rate, states = run_reasoning_engine(user_id)
 
@@ -121,7 +119,7 @@ def dashboard():
         history_A = format_history(df, "Plant_A", hours=HISTORY_HOURS)
         history_B = format_history(df, "Plant_B", hours=HISTORY_HOURS)
 
-        return jsonify({
+        return {
             "latest": latest,
             "decision": decision,
             "history": {
@@ -132,9 +130,33 @@ def dashboard():
                 "Plant_A": pred_A,
                 "Plant_B": pred_B
             }
-        })
+        }
     except ValueError:
-        return jsonify(empty_dashboard_payload())
+        return empty_dashboard_payload()
+
+
+def get_cached_dashboard_payload(user_id):
+    now = time.time()
+    cached = dashboard_cache.get(user_id)
+    if cached and (now - cached["time"]) < CACHE_TTL_SECONDS:
+        return cached["data"]
+
+    payload = build_dashboard_payload(user_id)
+    dashboard_cache[user_id] = {
+        "time": now,
+        "data": payload,
+    }
+    return payload
+
+
+@app.route("/dashboard")
+def dashboard():
+    user_id = resolve_user_id()
+    if not user_id:
+        return jsonify({"error": "user_id is required"}), 400
+
+    payload = get_cached_dashboard_payload(user_id)
+    return jsonify(payload)
 
 
 @app.route("/dashboard/latest")
@@ -177,6 +199,9 @@ def create_plant():
         .execute()
     )
 
+    # Ensure next dashboard request recomputes after ownership changes.
+    dashboard_cache.pop(user_id, None)
+
     return jsonify({"success": True, "data": response.data})
 
 
@@ -195,6 +220,9 @@ def assign_plant():
         .eq("id", plant_id)
         .execute()
     )
+
+    # Reassignment can affect multiple users; clear cache conservatively.
+    dashboard_cache.clear()
 
     return jsonify({"success": True, "data": response.data})
 
