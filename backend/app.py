@@ -1,9 +1,10 @@
 import os
 
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 from analysis.reasoning_engine import run_reasoning_engine, get_latest_decision
 from analysis.preprocessing import get_latest_raw_moisture_by_plant
+from analysis.preprocessing import supabase as supabase_client
 from prediction import predict_plant
 import pandas as pd
 
@@ -67,33 +68,73 @@ def format_history(df_historical, plant_name, hours=48):
     return history
 
 
-@app.route("/dashboard")
-def dashboard():
-    user_id = DEMO_USER_ID
-    df, smoothed, rate, states = run_reasoning_engine(user_id)
+def resolve_user_id():
+    """Resolve the active user id from the request, with demo fallback."""
+    user_id = request.args.get("user_id")
+    if user_id:
+        return user_id
 
-    decision = get_latest_decision(states)
-    latest = get_latest_raw_moisture_by_plant(user_id)
+    if DEMO_USER_ID:
+        return DEMO_USER_ID
 
-    pred_A = predict_plant(df["Plant_A"], FORECAST_HORIZON_MINUTES)
-    pred_B = predict_plant(df["Plant_B"], FORECAST_HORIZON_MINUTES)
+    return None
 
-    # Extract historical data (default 30 days) for chart context.
-    history_A = format_history(df, "Plant_A", hours=HISTORY_HOURS)
-    history_B = format_history(df, "Plant_B", hours=HISTORY_HOURS)
 
-    return jsonify({
-        "latest": latest,
-        "decision": decision,
+def empty_latest_payload():
+    return {
+        "Plant_A": None,
+        "Plant_B": None,
+    }
+
+
+def empty_dashboard_payload():
+    return {
+        "latest": empty_latest_payload(),
+        "decision": {},
         "history": {
-            "Plant_A": history_A,
-            "Plant_B": history_B
+            "Plant_A": [],
+            "Plant_B": [],
         },
         "prediction": {
-            "Plant_A": pred_A,
-            "Plant_B": pred_B
-        }
-    })
+            "Plant_A": {},
+            "Plant_B": {},
+        },
+    }
+
+
+@app.route("/dashboard")
+def dashboard():
+    user_id = resolve_user_id()
+    if not user_id:
+        return jsonify({"error": "user_id is required"}), 400
+
+    try:
+        df, smoothed, rate, states = run_reasoning_engine(user_id)
+
+        decision = get_latest_decision(states)
+        latest = get_latest_raw_moisture_by_plant(user_id)
+
+        pred_A = predict_plant(df["Plant_A"], FORECAST_HORIZON_MINUTES)
+        pred_B = predict_plant(df["Plant_B"], FORECAST_HORIZON_MINUTES)
+
+        # Extract historical data (default 30 days) for chart context.
+        history_A = format_history(df, "Plant_A", hours=HISTORY_HOURS)
+        history_B = format_history(df, "Plant_B", hours=HISTORY_HOURS)
+
+        return jsonify({
+            "latest": latest,
+            "decision": decision,
+            "history": {
+                "Plant_A": history_A,
+                "Plant_B": history_B
+            },
+            "prediction": {
+                "Plant_A": pred_A,
+                "Plant_B": pred_B
+            }
+        })
+    except ValueError:
+        return jsonify(empty_dashboard_payload())
 
 
 @app.route("/dashboard/latest")
@@ -104,9 +145,58 @@ def dashboard_latest():
     The frontend uses this for low-cost polling when full auto-refresh
     is disabled.
     """
-    user_id = DEMO_USER_ID
-    latest = get_latest_raw_moisture_by_plant(user_id)
+    user_id = resolve_user_id()
+    if not user_id:
+        return jsonify({"error": "user_id is required"}), 400
+
+    try:
+        latest = get_latest_raw_moisture_by_plant(user_id)
+    except ValueError:
+        return jsonify({"latest": empty_latest_payload()})
+
     return jsonify({"latest": latest})
+
+
+@app.route("/plants/create", methods=["POST"])
+def create_plant():
+    data = request.get_json(silent=True) or {}
+    user_id = data.get("user_id")
+    plant_name = data.get("plant_name")
+    plant_type = data.get("plant_type")
+
+    if not user_id or not plant_name:
+        return jsonify({"error": "Missing fields"}), 400
+
+    response = (
+        supabase_client.table("plants")
+        .insert({
+            "plant_name": plant_name,
+            "plant_type": plant_type,
+            "user_id": user_id,
+        })
+        .execute()
+    )
+
+    return jsonify({"success": True, "data": response.data})
+
+
+@app.route("/plants/assign", methods=["POST"])
+def assign_plant():
+    data = request.get_json(silent=True) or {}
+    plant_id = data.get("plant_id")
+    user_id = data.get("user_id")
+
+    if not plant_id or not user_id:
+        return jsonify({"error": "Missing fields"}), 400
+
+    response = (
+        supabase_client.table("plants")
+        .update({"user_id": user_id})
+        .eq("id", plant_id)
+        .execute()
+    )
+
+    return jsonify({"success": True, "data": response.data})
 
 
 if __name__ == "__main__":
