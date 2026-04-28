@@ -144,15 +144,32 @@ function showDashboard() {
   load();
 }
 
-function ensureOriginalDashboardMarkup() {
-  const container = document.querySelector(".container");
-  if (container && !originalDashboardMarkup) {
-    originalDashboardMarkup = container.innerHTML;
-  }
-
-  if (container && originalDashboardMarkup) {
-    container.innerHTML = originalDashboardMarkup;
-  }
+function createPlantCard(plant, index) {
+  return `
+    <div class="card">
+      <h3>${plant.plant_name}</h3>
+      <div class="sensor-grid">
+        <div class="sensor-item">
+          <div class="sensor-label">Moisture</div>
+          <div class="value" id="value${index}">--%</div>
+        </div>
+        <div class="sensor-item">
+          <div class="sensor-label">Light</div>
+          <div class="sensor-value" id="light${index}">-- lux</div>
+        </div>
+        <div class="sensor-item">
+          <div class="sensor-label">Temp</div>
+          <div class="sensor-value" id="temp${index}">-- °C</div>
+        </div>
+        <div class="sensor-item">
+          <div class="sensor-label">Humidity</div>
+          <div class="sensor-value" id="humidity${index}">-- %</div>
+        </div>
+      </div>
+      <div class="badge" id="status${index}">--</div>
+      <div class="meta" id="eta${index}"></div>
+    </div>
+  `;
 }
 
 function applyThemeFromStorage() {
@@ -604,42 +621,20 @@ async function load() {
       console.log("No latest data yet, rendering dashboard shell.");
     }
 
-    const visiblePlants = plants.slice(0, 2);
-    const plantA = visiblePlants[0] || null;
-    const plantB = visiblePlants[1] || null;
+    const cardsContainer = document.getElementById("plantCards");
+    cardsContainer.innerHTML = "";
 
-    const cardTitles = document.querySelectorAll(".cards .card h3");
-    if (cardTitles[0]) cardTitles[0].innerText = plantA?.plant_name || "Plant A";
-    if (cardTitles[1]) cardTitles[1].innerText = plantB?.plant_name || "Plant B";
+    plants.forEach((plant, index) => {
+      cardsContainer.innerHTML += createPlantCard(plant, index);
 
-    // Populate each plant's data
-    if (plantA) {
-      const latestA = data.latest?.[plantA.alias] || null;
-      const predA = data.prediction?.[plantA.alias] || {};
-      const decisionA = data.decision?.[plantA.alias] || "No data yet";
-      updatePlant("A", decisionA, latestA?.moisture, predA, latestA);
-    } else {
-      updatePlant("A", "No data yet", null, {}, null);
-    }
+      const latest = data.latest?.[plant.alias] || null;
+      const pred = data.prediction?.[plant.alias] || {};
+      const decision = data.decision?.[plant.alias] || "No data yet";
 
-    if (plantB) {
-      const latestB = data.latest?.[plantB.alias] || null;
-      const predB = data.prediction?.[plantB.alias] || {};
-      const decisionB = data.decision?.[plantB.alias] || "No data yet";
-      updatePlant("B", decisionB, latestB?.moisture, predB, latestB);
-    } else {
-      updatePlant("B", "No data yet", null, {}, null);
-    }
+      updatePlant(index, decision, latest?.moisture, pred, latest);
+    });
 
-    // Build chart for up to two plants (fallback to first two)
-    const chartPlants = visiblePlants;
-    const history0 = data.history?.[chartPlants[0].alias] || [];
-    const forecast0 = data.prediction?.[chartPlants[0].alias]?.forecast || [];
-    const history1 = chartPlants[1] ? (data.history?.[chartPlants[1].alias] || []) : [];
-    const forecast1 = chartPlants[1] ? (data.prediction?.[chartPlants[1].alias]?.forecast || []) : [];
-
-    const names = chartPlants.map(p => p.plant_name);
-    buildChart(history0, forecast0, history1, forecast1, names);
+    buildChart(plants, data);
   } catch (error) {
     console.error("Dashboard partial error:", error);
   }
@@ -675,9 +670,8 @@ setInterval(() => {
   }
 }, 10000);
 
-function updatePlant(id, status, moisture, pred, sensorData) {
-  const suffix = `${id}`;
-  const valueEl = document.getElementById(`value${suffix}`);
+function updatePlant(index, status, moisture, pred, sensorData) {
+  const valueEl = document.getElementById(`value${index}`);
   if (valueEl) {
     if (moisture === null || moisture === undefined) {
       valueEl.innerText = "--%";
@@ -692,19 +686,19 @@ function updatePlant(id, status, moisture, pred, sensorData) {
   const humidity = sensorData?.humidity;
 
   if (light !== undefined && !Number.isNaN(Number(light))) {
-    const el = document.getElementById(`light${suffix}`);
+    const el = document.getElementById(`light${index}`);
     if (el) el.innerText = `${Number(light).toFixed(1)} lux`;
   }
   if (temp !== undefined && !Number.isNaN(Number(temp))) {
-    const el = document.getElementById(`temp${suffix}`);
+    const el = document.getElementById(`temp${index}`);
     if (el) el.innerText = `${Number(temp).toFixed(1)} °C`;
   }
   if (humidity !== undefined && !Number.isNaN(Number(humidity))) {
-    const el = document.getElementById(`humidity${suffix}`);
+    const el = document.getElementById(`humidity${index}`);
     if (el) el.innerText = `${Number(humidity).toFixed(1)} %`;
   }
 
-  const badge = document.getElementById(`status${suffix}`);
+  const badge = document.getElementById(`status${index}`);
   badge.innerText = status;
   badge.className = "badge";
 
@@ -720,210 +714,120 @@ function updatePlant(id, status, moisture, pred, sensorData) {
     ? new Date(pred.eta_to_40).toLocaleString()
     : "N/A";
 
-  const etaEl = document.getElementById(`eta${suffix}`);
+  const etaEl = document.getElementById(`eta${index}`);
   if (etaEl) etaEl.innerText = `${pred.eta_hours?.toFixed(1)} hrs (~${eta})`;
 }
 
-function buildChart(historyA, forecastA, historyB, forecastB, names = ["Plant 1", "Plant 2"]) {
+function buildChart(plants, data) {
   const isLight = document.body.classList.contains("light");
   const ctx = document.getElementById("chart").getContext("2d");
 
-  // HISTORY DATA (solid lines)
-  const historyDataA = historyA.map((p) => ({
-    x: new Date(p.t),
-    y: p.value
-  }));
-  const historyDataB = historyB.map((p) => ({
-    x: new Date(p.t),
-    y: p.value
-  }));
+  const colors = ["#3b82f6", "#f97316", "#8b5cf6", "#10b981", "#ec4899", "#f59e0b"];
+  const datasets = [];
+  const allPoints = [];
 
-  // FORECAST DATA (dotted continuation)
-  const futureOnlyA = forecastA.map((p) => ({
-    x: new Date(p.t),
-    y: p.value
-  }));
-  const futureOnlyB = forecastB.map((p) => ({
-    x: new Date(p.t),
-    y: p.value
-  }));
+  // Build datasets for each plant
+  plants.forEach((plant, idx) => {
+    const color = colors[idx % colors.length];
+    const history = (data.history?.[plant.alias] || []).map((p) => ({
+      x: new Date(p.t),
+      y: p.value
+    }));
+    const forecast = (data.prediction?.[plant.alias]?.forecast || []).map((p) => ({
+      x: new Date(p.t),
+      y: p.value
+    }));
 
-  // Start forecast from the last observed point for a seamless continuation.
-  const forecastDataA = historyDataA.length
-    ? [{ x: historyDataA[historyDataA.length - 1].x, y: null }, ...futureOnlyA]
-    : futureOnlyA;
-  const forecastDataB = historyDataB.length
-    ? [{ x: historyDataB[historyDataB.length - 1].x, y: null }, ...futureOnlyB]
-    : futureOnlyB;
+    // Forecast starts from last observed point for seamless continuation
+    const forecastData = history.length
+      ? [{ x: history[history.length - 1].x, y: null }, ...forecast]
+      : forecast;
 
-  // Current live points (last observed historical sample).
-  const livePointA = historyDataA.length
-    ? [historyDataA[historyDataA.length - 1]]
-    : [];
-  const livePointB = historyDataB.length
-    ? [historyDataB[historyDataB.length - 1]]
-    : [];
+    // Live point is the last observed data point
+    const livePoint = history.length ? [history[history.length - 1]] : [];
 
-  // Build a stable domain: minimum 1 week back + 1 week forward.
+    allPoints.push(...history, ...forecastData, ...livePoint);
+
+    // History dataset
+    datasets.push({
+      label: plant.plant_name,
+      data: history,
+      borderColor: color,
+      borderWidth: 2,
+      fill: false,
+      tension: 0,
+      pointRadius: 0,
+      pointHoverRadius: 4,
+      pointHitRadius: 8,
+      pointBackgroundColor: color,
+      order: 2,
+      spanGaps: false,
+      parsing: true
+    });
+
+    // Live point dataset
+    datasets.push({
+      label: `${plant.plant_name} Live`,
+      data: livePoint,
+      borderColor: color,
+      backgroundColor: color,
+      showLine: false,
+      pointRadius: 5,
+      pointHoverRadius: 4,
+      pointHitRadius: 8,
+      pointStyle: "circle",
+      pointBorderColor: "#ffffff",
+      pointBorderWidth: 2,
+      z: 10,
+      order: 1
+    });
+
+    // Forecast dataset
+    datasets.push({
+      label: `${plant.plant_name} Forecast`,
+      data: forecastData,
+      borderColor: color,
+      borderDash: [5, 5],
+      borderWidth: 2,
+      fill: false,
+      tension: 0,
+      pointRadius: 0,
+      pointHoverRadius: 4,
+      pointHitRadius: 8,
+      spanGaps: false,
+      order: 3,
+      parsing: true
+    });
+  });
+
+  // Build time domain from all data points
   const latestObservedMs = Math.max(
-    historyDataA[historyDataA.length - 1]?.x?.getTime() || -Infinity,
-    historyDataB[historyDataB.length - 1]?.x?.getTime() || -Infinity
-  );
+    ...allPoints.map((p) => (p.x?.getTime ? p.x.getTime() : -Infinity)).filter(ms => ms > 0)
+  ) || Date.now();
 
-  const allPoints = [
-    ...historyDataA,
-    ...historyDataB,
-    ...forecastDataA,
-    ...forecastDataB
-  ];
-
-  const fallbackNowMs = allPoints.length
-    ? Math.max(...allPoints.map((p) => p.x.getTime()))
-    : Date.now();
-  const anchorMs = Number.isFinite(latestObservedMs) ? latestObservedMs : fallbackNowMs;
-
-  // Round anchor to 6-hour blocks to prevent tiny x-axis shifts every refresh.
   const hourMs = 60 * 60 * 1000;
-  const stabilizedAnchorMs = Math.floor(anchorMs / (6 * hourMs)) * (6 * hourMs);
-
+  const stabilizedAnchorMs = Math.floor(latestObservedMs / (6 * hourMs)) * (6 * hourMs);
   const oneWeekMs = 7 * 24 * 60 * 60 * 1000;
 
-  // Find where actual data starts
-  const dataPointsWithTime = [
-    ...historyDataA,
-    ...historyDataB
-  ].filter(p => p.x);
-  
-  const dataStartMs = dataPointsWithTime.length
-    ? Math.min(...dataPointsWithTime.map(p => p.x.getTime()))
-    : stabilizedAnchorMs - oneWeekMs;
-
-  const desiredMin = stabilizedAnchorMs - oneWeekMs;
-  
-  // Smart window: show 7 days if data exists, else snap to data start
-  const xMin = new Date(Math.max(desiredMin, dataStartMs));
+  const xMin = new Date(stabilizedAnchorMs - oneWeekMs);
   const xMax = new Date(stabilizedAnchorMs + oneWeekMs);
 
-  const thresholdData =
-    xMin && xMax
-      ? [
-          { x: xMin, y: 40 },
-          { x: xMax, y: 40 }
-        ]
-      : [];
-
-  const datasets = [
-        // HISTORY (solid)
-        {
-          label: names[0] || "Plant 1",
-          data: historyDataA,
-          borderColor: "#3b82f6",
-          borderWidth: 2,
-          fill: false,
-          tension: 0,
-          // small visible points so tooltips can reliably target them
-          pointRadius: 0,
-          pointHoverRadius: 4,
-          pointHitRadius: 8,
-          pointBackgroundColor: "#3b82f6",
-          order: 2,
-          spanGaps: false,
-          parsing: true
-        },
-        {
-          label: names[1] || "Plant 2",
-          data: historyDataB,
-          borderColor: "#f97316",
-          borderWidth: 2,
-          fill: false,
-          tension: 0,
-          pointRadius: 0,
-          pointHoverRadius: 4,
-          pointHitRadius: 8,
-          pointBackgroundColor: "#f97316",
-          order: 2,
-          spanGaps: false,
-          parsing: true
-        },
-
-        // LIVE POINTS (current observed values)
-        {
-          label: `${names[0] || 'Plant 1'} Live`,
-          data: livePointA,
-          borderColor: "#3b82f6",
-          backgroundColor: "#3b82f6",
-          showLine: false,
-          pointRadius: 5,
-          pointHoverRadius: 4,
-          pointHitRadius: 8,
-          pointStyle: "circle",
-          pointBorderColor: "#ffffff",
-          pointBorderWidth: 2,
-          z: 10,
-          order: 1
-        },
-        {
-          label: `${names[1] || 'Plant 2'} Live`,
-          data: livePointB,
-          borderColor: "#f97316",
-          backgroundColor: "#f97316",
-          showLine: false,
-          pointRadius: 5,
-          pointHoverRadius: 4,
-          pointHitRadius: 8,
-          pointStyle: "circle",
-          pointBorderColor: "#ffffff",
-          pointBorderWidth: 2,
-          z: 10,
-          order: 1
-        },
-
-        // FORECAST (dotted continuation)
-        {
-          label: `${names[0] || 'Plant 1'} Forecast`,
-          data: forecastDataA,
-          borderColor: "#3b82f6",
-          borderDash: [5, 5],
-          borderWidth: 2,
-          fill: false,
-          tension: 0,
-          pointRadius: 0,
-          pointHoverRadius: 4,
-          pointHitRadius: 8,
-          spanGaps: false,
-          order: 3,
-          parsing: true
-        },
-        {
-          label: `${names[1] || 'Plant 2'} Forecast`,
-          data: forecastDataB,
-          borderColor: "#f97316",
-          borderDash: [5, 5],
-          borderWidth: 2,
-          fill: false,
-          tension: 0,
-          pointRadius: 0,
-          pointHoverRadius: 4,
-          pointHitRadius: 8,
-          spanGaps: false,
-          order: 3,
-          parsing: true
-        },
-
-        // THRESHOLD (red dashed)
-        {
-          label: "Threshold (40%)",
-          data: thresholdData,
-          borderColor: "red",
-          borderDash: [5, 5],
-          borderWidth: 2,
-          fill: false,
-          pointRadius: 0,
-          pointHoverRadius: 0,
-          tension: 0,
-          order: 4
-        }
-      ];
+  // Add threshold line
+  datasets.push({
+    label: "Threshold (40%)",
+    data: [
+      { x: xMin, y: 40 },
+      { x: xMax, y: 40 }
+    ],
+    borderColor: "red",
+    borderDash: [5, 5],
+    borderWidth: 2,
+    fill: false,
+    pointRadius: 0,
+    pointHoverRadius: 0,
+    tension: 0,
+    order: 4
+  });
 
   const chartOptions = createChartOptions(isLight);
   chartOptions.scales.x.min = xMin;
@@ -939,12 +843,9 @@ function buildChart(historyA, forecastA, historyB, forecastB, names = ["Plant 1"
     return;
   }
 
-  // Update only the data, not the entire dataset structure
-  datasets.forEach((newDs, i) => {
-    if (chart.data.datasets[i]) {
-      chart.data.datasets[i].data = newDs.data;
-    }
-  });
+  // Rebuild chart completely for dynamic plant count changes
+  chart.data.datasets = datasets;
+  chart.options = chartOptions;
   chart.update("none");
   startBlink();
 }
