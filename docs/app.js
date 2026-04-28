@@ -1,4 +1,17 @@
-const API_URL = "http://127.0.0.1:5000";
+const API_URL = CONFIG.API_URL;
+
+// Initialize Supabase client (only once)
+let supabaseClient;
+if (!window.supabaseClient) {
+  supabaseClient = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
+  window.supabaseClientInstance = supabaseClient;
+} else {
+  supabaseClient = window.supabaseClientInstance;
+}
+
+// Auth state
+let currentUser = null;
+
 let chart;
 let interval;
 let lastUpdateTime = null;
@@ -9,10 +22,92 @@ let blinkOn = true;
 // track last seen per-plant timestamps from /dashboard/latest
 let lastSeenTimestamp = { Plant_A: null, Plant_B: null };
 
+// ============ AUTH FUNCTIONS ============
+
+function toggleSignupMode() {
+  document.getElementById("authForm").style.display = 
+    document.getElementById("authForm").style.display === "none" ? "block" : "none";
+  document.getElementById("signupForm").style.display = 
+    document.getElementById("signupForm").style.display === "none" ? "block" : "none";
+}
+
+async function handleLogin() {
+  const email = document.getElementById("authEmail").value;
+  const password = document.getElementById("authPassword").value;
+
+  if (!email || !password) {
+    showAuthError("Email and password required");
+    return;
+  }
+
+  const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+
+  if (error) {
+    showAuthError(error.message);
+    return;
+  }
+
+  currentUser = data.user;
+  showDashboard();
+}
+
+async function handleSignup() {
+  const email = document.getElementById("signupEmail").value;
+  const password = document.getElementById("signupPassword").value;
+  const passwordConfirm = document.getElementById("signupPasswordConfirm").value;
+
+  if (!email || !password || !passwordConfirm) {
+    showAuthError("All fields required");
+    return;
+  }
+
+  if (password !== passwordConfirm) {
+    showAuthError("Passwords do not match");
+    return;
+  }
+
+  const { data, error } = await supabaseClient.auth.signUp({ email, password });
+
+  if (error) {
+    showAuthError(error.message);
+    return;
+  }
+
+  // Auto-login after signup
+  currentUser = data.user;
+  showDashboard();
+}
+
+async function handleLogout() {
+  await supabaseClient.auth.signOut();
+  currentUser = null;
+  location.reload();
+}
+
+function showAuthError(message) {
+  document.getElementById("authError").textContent = message;
+}
+
+function showAuthSection() {
+  document.getElementById("authSection").style.display = "block";
+  document.querySelector(".container").style.display = "none";
+  document.querySelector(".status-bar").style.display = "none";
+}
+
+function showDashboard() {
+  document.getElementById("authSection").style.display = "none";
+  document.querySelector(".container").style.display = "block";
+  document.querySelector(".status-bar").style.display = "block";
+  document.getElementById("userEmail").textContent = currentUser.email;
+  load();
+}
+
+// ============ END AUTH FUNCTIONS ============
+
 // Poll /dashboard/latest and only call full `load()` when timestamps change.
 async function pollLatestForChanges() {
   try {
-    const res = await fetch(`${API_URL}/dashboard/latest`);
+    const res = await fetch(`${API_URL}/dashboard/latest?user_id=${currentUser.id}`);
     if (!res.ok) return;
     const data = await res.json();
     const a = data.latest?.Plant_A?.timestamp ?? null;
@@ -181,7 +276,7 @@ function setAutoRefresh(enabled) {
 // Fetch only the latest small payload to populate UI immediately
 async function fetchLatestOnly() {
   try {
-    const res = await fetch(`${API_URL}/dashboard/latest`);
+    const res = await fetch(`${API_URL}/dashboard/latest?user_id=${currentUser.id}`);
     if (!res.ok) return;
     const data = await res.json();
     const latestA = data.latest?.Plant_A;
@@ -211,7 +306,7 @@ async function fetchLatestOnly() {
 // immediately while full history loads in background.
 async function fetchSummaryOnly() {
   try {
-    const res = await fetch(`${API_URL}/dashboard/summary`);
+    const res = await fetch(`${API_URL}/dashboard/summary?user_id=${currentUser.id}`);
     if (!res.ok) return;
     const data = await res.json();
 
@@ -363,7 +458,7 @@ async function fetchSummaryOnly() {
 
 async function load() {
   try {
-    const res = await fetch(`${API_URL}/dashboard`);
+    const res = await fetch(`${API_URL}/dashboard?user_id=${currentUser.id}`);
     const data = await res.json();
 
     // Update last update time
@@ -686,32 +781,59 @@ function buildChart(historyA, forecastA, historyB, forecastB) {
   startBlink();
 }
 
-window.onload = () => {
-  // Initialize status bar
-  updateStatusBar("live");
+window.onload = async () => {
+  // Check for existing session using Supabase
+  try {
+    const { data: { session } } = await supabaseClient.auth.getSession();
+    
+    if (session) {
+      currentUser = session.user;
+      showDashboard();
 
-  fetchSummaryOnly(); // render forecast immediately
-  fetchLatestOnly(); // populate UI quickly with minimal payload
-  load(); // then load full dashboard (chart etc.)
+      // Initialize status bar
+      updateStatusBar("live");
 
-  const toggle = document.getElementById("themeToggle");
-  // Always enable continuous auto-refresh (no UI toggle)
-  autoRefreshEnabled = true;
-  setAutoRefresh(true);
+      fetchSummaryOnly(); // render forecast immediately
+      fetchLatestOnly(); // populate UI quickly with minimal payload
+      load(); // then load full dashboard (chart etc.)
 
-  // Load saved theme preference
-  if (localStorage.getItem("theme") === "light") {
-    document.body.classList.add("light");
-    toggle.checked = true;
+      // Always enable continuous auto-refresh (no UI toggle)
+      autoRefreshEnabled = true;
+      setAutoRefresh(true);
+    } else {
+      showAuthSection();
+    }
+  } catch (e) {
+    console.error("Auth error:", e);
+    showAuthSection();
   }
 
-  toggle.addEventListener("change", () => {
-    if (toggle.checked) {
-      document.body.classList.add("light");
-      localStorage.setItem("theme", "light");
-    } else {
-      document.body.classList.remove("light");
-      localStorage.setItem("theme", "dark");
+  // Setup theme toggle (only on dashboard)
+  try {
+    const toggle = document.getElementById("themeToggle");
+    if (toggle) {
+      // Load saved theme preference (default to light)
+      const savedTheme = localStorage.getItem("theme");
+      if (!savedTheme) {
+        document.body.classList.add("light");
+        localStorage.setItem("theme", "light");
+        toggle.checked = true;
+      } else if (savedTheme === "light") {
+        document.body.classList.add("light");
+        toggle.checked = true;
+      }
+
+      toggle.addEventListener("change", () => {
+        if (toggle.checked) {
+          document.body.classList.add("light");
+          localStorage.setItem("theme", "light");
+        } else {
+          document.body.classList.remove("light");
+          localStorage.setItem("theme", "dark");
+        }
+      });
     }
-  });
+  } catch (err) {
+    // ignore theme toggle errors
+  }
 };

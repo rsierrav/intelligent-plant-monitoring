@@ -5,14 +5,37 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Plant Moisture Dashboard</title>
     <link rel="stylesheet" href="style.css" />
+    <script src="config.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/luxon@3"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   </head>
 
   <body>
+    <!-- Auth Section (hidden when logged in) -->
+    <div id="authSection" class="auth-section" style="display: none;">
+      <div class="auth-container">
+        <h2>Plant Monitoring System</h2>
+        <div id="authForm">
+          <input id="authEmail" type="email" placeholder="Email" />
+          <input id="authPassword" type="password" placeholder="Password" />
+          <button onclick="handleLogin()">Login</button>
+          <button onclick="toggleSignupMode()">Create Account</button>
+        </div>
+        <div id="signupForm" style="display: none;">
+          <input id="signupEmail" type="email" placeholder="Email" />
+          <input id="signupPassword" type="password" placeholder="Password" />
+          <input id="signupPasswordConfirm" type="password" placeholder="Confirm Password" />
+          <button onclick="handleSignup()">Sign Up</button>
+          <button onclick="toggleSignupMode()">Back to Login</button>
+        </div>
+        <div id="authError" style="color: red; margin-top: 10px;"></div>
+      </div>
+    </div>
+
     <!-- Status Bar -->
-    <div class="status-bar">
+    <div class="status-bar" style="display: none;">
       <div class="status-indicator">
         <span id="statusIndicator" class="indicator-dot live"></span>
         <span id="statusText">Live</span>
@@ -20,7 +43,7 @@
       <div id="lastUpdated" class="last-updated">Last updated: --</div>
     </div>
 
-    <div class="container">
+    <div class="container" style="display: none;">
     <div class="header">
       <h1>Plant Moisture Dashboard</h1>
 
@@ -31,6 +54,8 @@
           <input type="checkbox" id="themeToggle" />
           <span class="slider"></span>
         </label>
+
+        <button id="logoutBtn" onclick="handleLogout()" style="margin-left: 10px;">Logout (<span id="userEmail"></span>)</button>
       </div>
     </div>
 
