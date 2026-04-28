@@ -557,6 +557,26 @@ async function load() {
       return;
     }
 
+    // If plants exist but none have any readings, show a concise no-data UX
+    const hasAnyData = Object.values(data.latest || {}).some((v) => {
+      return Boolean(v && (v.moisture != null || v.timestamp != null));
+    });
+
+    if (!hasAnyData) {
+      const firstSection = document.querySelector(".section");
+      if (firstSection) {
+        firstSection.innerHTML = `
+          <div class="card" style="text-align:center; padding:40px;">
+            <h2>No Data Yet</h2>
+            <p>Your plant has been created, but no sensor data has been received.</p>
+            <p style="font-size:12px; color:#666;">Connect your ESP32 or wait for readings to start appearing.</p>
+            <button onclick="openAddPlant()">+ Add Another Plant</button>
+          </div>
+        `;
+      }
+      return;
+    }
+
     // Render plant cards dynamically
     const firstSection = document.querySelector(".section");
     if (!firstSection) return;
