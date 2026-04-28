@@ -182,9 +182,9 @@ def get_latest_raw_moisture_by_plant(user_id):
             utc=True,
         ).tz_convert("US/Eastern")
         latest_by_plant[plant_name] = {
-            "moisture": row["soil_moisture_percent"],
-            "timestamp": ts,
-        }
+            "moisture": float(row["soil_moisture_percent"]),
+            "timestamp": ts.isoformat(),
+            }
 
     return latest_by_plant
 
