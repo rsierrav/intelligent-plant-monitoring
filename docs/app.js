@@ -41,7 +41,7 @@ function startBlink() {
     if (!chart) return;
     chart.data.datasets.forEach((ds) => {
       if (ds.label && ds.label.includes("Live")) {
-        ds.pointRadius = blinkOn ? 6 : 0;
+        ds.pointRadius = blinkOn ? 6 : 4;
       }
     });
     chart.update("none");
@@ -264,10 +264,13 @@ async function fetchSummaryOnly() {
           borderColor: "#3b82f6",
           backgroundColor: "#3b82f6",
           showLine: false,
-          pointRadius: 0,
+          pointRadius: 5,
           pointHoverRadius: 4,
           pointHitRadius: 8,
           pointStyle: "circle",
+          pointBorderColor: "#ffffff",
+          pointBorderWidth: 2,
+          z: 10,
           order: 1
         },
         {
@@ -276,10 +279,13 @@ async function fetchSummaryOnly() {
           borderColor: "#f97316",
           backgroundColor: "#f97316",
           showLine: false,
-          pointRadius: 0,
+          pointRadius: 5,
           pointHoverRadius: 4,
           pointHitRadius: 8,
           pointStyle: "circle",
+          pointBorderColor: "#ffffff",
+          pointBorderWidth: 2,
+          z: 10,
           order: 1
         },
         {
@@ -568,10 +574,13 @@ function buildChart(historyA, forecastA, historyB, forecastB) {
           borderColor: "#3b82f6",
           backgroundColor: "#3b82f6",
           showLine: false,
-          pointRadius: 0,
+          pointRadius: 5,
           pointHoverRadius: 4,
           pointHitRadius: 8,
           pointStyle: "circle",
+          pointBorderColor: "#ffffff",
+          pointBorderWidth: 2,
+          z: 10,
           order: 1
         },
         {
@@ -580,10 +589,13 @@ function buildChart(historyA, forecastA, historyB, forecastB) {
           borderColor: "#f97316",
           backgroundColor: "#f97316",
           showLine: false,
-          pointRadius: 0,
+          pointRadius: 5,
           pointHoverRadius: 4,
           pointHitRadius: 8,
           pointStyle: "circle",
+          pointBorderColor: "#ffffff",
+          pointBorderWidth: 2,
+          z: 10,
           order: 1
         },
 
