@@ -35,14 +35,26 @@ def time_to_threshold(current_value, slope):
     return minutes
 
 
+def normalize_timestamp(ts, bucket_minutes=5):
+    """
+    Round timestamp down to the nearest bucket_minutes interval.
+    Prevents timestamp drift by ensuring consistent bucketing across refreshes.
+    """
+    minute = (ts.minute // bucket_minutes) * bucket_minutes
+    return ts.replace(minute=minute, second=0, microsecond=0)
+
+
 def build_prediction_line(last_time, current_value, slope, horizon_minutes):
     if slope is None:
         return None, None
 
+    # Normalize the start time to prevent drift on every refresh
+    normalized_start = normalize_timestamp(last_time)
+
     periods = max(2, int(np.ceil(horizon_minutes / 5.0)))
 
     future_times = pd.date_range(
-        start=last_time + pd.Timedelta(minutes=5),
+        start=normalized_start + pd.Timedelta(minutes=5),
         periods=periods,
         freq="5min",
     )
