@@ -389,11 +389,11 @@ function updateStatusBar(status) {
   indicator.className = `indicator-dot ${status}`;
 
   if (status === "live") {
-    statusText.innerText = "🟢 Live";
+    statusText.innerText = "Live";
   } else if (status === "stale") {
-    statusText.innerText = "🟡 Stale";
+    statusText.innerText = "Stale";
   } else {
-    statusText.innerText = "🔴 Offline";
+    statusText.innerText = "Offline";
   }
 
   if (lastUpdateTime) {
