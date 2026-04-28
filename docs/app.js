@@ -107,6 +107,8 @@ function createChartOptions(isLight) {
       x: {
         type: "time",
         bounds: "data",
+        offset: false,
+        grace: 0,
         time: {
           unit: "day",
           displayFormats: {
@@ -523,7 +525,20 @@ function buildChart(historyA, forecastA, historyB, forecastB) {
 
   const oneWeekMs = 7 * 24 * 60 * 60 * 1000;
 
-  const xMin = new Date(stabilizedAnchorMs - oneWeekMs);
+  // Find where actual data starts
+  const dataPointsWithTime = [
+    ...historyDataA,
+    ...historyDataB
+  ].filter(p => p.x);
+  
+  const dataStartMs = dataPointsWithTime.length
+    ? Math.min(...dataPointsWithTime.map(p => p.x.getTime()))
+    : stabilizedAnchorMs - oneWeekMs;
+
+  const desiredMin = stabilizedAnchorMs - oneWeekMs;
+  
+  // Smart window: show 7 days if data exists, else snap to data start
+  const xMin = new Date(Math.max(desiredMin, dataStartMs));
   const xMax = new Date(stabilizedAnchorMs + oneWeekMs);
 
   const thresholdData =
