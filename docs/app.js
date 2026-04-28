@@ -21,6 +21,7 @@ let blinkInterval = null;
 let blinkOn = true;
 // track last seen per-plant timestamps from /dashboard/latest
 let lastSeenTimestamp = {};
+let originalDashboardMarkup = null;
 
 // ============ AUTH FUNCTIONS ============
 
@@ -141,6 +142,44 @@ function showDashboard() {
   document.querySelector(".status-bar").style.display = "block";
   document.getElementById("userEmail").textContent = currentUser.email;
   load();
+}
+
+function ensureOriginalDashboardMarkup() {
+  const container = document.querySelector(".container");
+  if (container && !originalDashboardMarkup) {
+    originalDashboardMarkup = container.innerHTML;
+  }
+
+  if (container && originalDashboardMarkup) {
+    container.innerHTML = originalDashboardMarkup;
+  }
+}
+
+function applyThemeFromStorage() {
+  const toggle = document.getElementById("themeToggle");
+  const savedTheme = localStorage.getItem("theme");
+
+  if (!savedTheme || savedTheme === "light") {
+    document.body.classList.add("light");
+    localStorage.setItem("theme", "light");
+    if (toggle) toggle.checked = true;
+  } else {
+    document.body.classList.remove("light");
+    if (toggle) toggle.checked = false;
+  }
+
+  if (toggle && !toggle.dataset.bound) {
+    toggle.dataset.bound = "true";
+    toggle.addEventListener("change", () => {
+      document.body.classList.toggle("light", toggle.checked);
+      localStorage.setItem("theme", toggle.checked ? "light" : "dark");
+
+      if (chart) {
+        chart.options = createChartOptions(document.body.classList.contains("light"));
+        chart.update("none");
+      }
+    });
+  }
 }
 
 async function openAddPlant() {
@@ -557,70 +596,52 @@ async function load() {
       return;
     }
 
-    // If plants exist but none have any readings, show a concise no-data UX
+    // If plants exist but readings are still missing, keep rendering the dashboard.
     const hasAnyData = Object.values(data.latest || {}).some((v) => {
       return Boolean(v && (v.moisture != null || v.timestamp != null));
     });
-
     if (!hasAnyData) {
-      const firstSection = document.querySelector(".section");
-      if (firstSection) {
-        firstSection.innerHTML = `
-          <div class="card" style="text-align:center; padding:40px;">
-            <h2>No Data Yet</h2>
-            <p>Your plant has been created, but no sensor data has been received.</p>
-            <p style="font-size:12px; color:#666;">Connect your ESP32 or wait for readings to start appearing.</p>
-            <button onclick="openAddPlant()">+ Add Another Plant</button>
-          </div>
-        `;
-      }
-      return;
+      console.log("No latest data yet, rendering dashboard shell.");
     }
 
-    // Render plant cards dynamically
-    const firstSection = document.querySelector(".section");
-    if (!firstSection) return;
+    const visiblePlants = plants.slice(0, 2);
+    const plantA = visiblePlants[0] || null;
+    const plantB = visiblePlants[1] || null;
 
-    const cardsHtml = plants
-      .map((p) => {
-        const alias = p.alias;
-        const safe = `_${alias}`;
-        return `
-          <div class="card">
-            <div style="display:flex; justify-content:space-between; align-items:center">
-              <h3>${p.plant_name}</h3>
-              <span id="status_${alias}" class="badge">${"No data yet"}</span>
-            </div>
-            <div style="font-size:28px; margin-top:8px">Moisture: <span id="value_${alias}">--%</span></div>
-            <div style="margin-top:8px">ETA: <span id="eta_${alias}">N/A</span></div>
-            <div style="margin-top:8px; font-size:12px; color:#666">Sensors: Light <span id="light_${alias}">-</span> • Temp <span id="temp_${alias}">-</span> • Humidity <span id="humidity_${alias}">-</span></div>
-          </div>
-        `;
-      })
-      .join("\n");
-
-    firstSection.innerHTML = cardsHtml;
+    const cardTitles = document.querySelectorAll(".cards .card h3");
+    if (cardTitles[0]) cardTitles[0].innerText = plantA?.plant_name || "Plant A";
+    if (cardTitles[1]) cardTitles[1].innerText = plantB?.plant_name || "Plant B";
 
     // Populate each plant's data
-    plants.forEach((p) => {
-      const alias = p.alias;
-      const latest = data.latest?.[alias] || null;
-      const pred = data.prediction?.[alias] || {};
-      const decision = data.decision?.[alias] || "No data yet";
-      updatePlant(alias, decision, latest?.moisture, pred, latest);
-    });
+    if (plantA) {
+      const latestA = data.latest?.[plantA.alias] || null;
+      const predA = data.prediction?.[plantA.alias] || {};
+      const decisionA = data.decision?.[plantA.alias] || "No data yet";
+      updatePlant("A", decisionA, latestA?.moisture, predA, latestA);
+    } else {
+      updatePlant("A", "No data yet", null, {}, null);
+    }
+
+    if (plantB) {
+      const latestB = data.latest?.[plantB.alias] || null;
+      const predB = data.prediction?.[plantB.alias] || {};
+      const decisionB = data.decision?.[plantB.alias] || "No data yet";
+      updatePlant("B", decisionB, latestB?.moisture, predB, latestB);
+    } else {
+      updatePlant("B", "No data yet", null, {}, null);
+    }
 
     // Build chart for up to two plants (fallback to first two)
-    const chartPlants = plants.slice(0, 2);
+    const chartPlants = visiblePlants;
     const history0 = data.history?.[chartPlants[0].alias] || [];
     const forecast0 = data.prediction?.[chartPlants[0].alias]?.forecast || [];
     const history1 = chartPlants[1] ? (data.history?.[chartPlants[1].alias] || []) : [];
     const forecast1 = chartPlants[1] ? (data.prediction?.[chartPlants[1].alias]?.forecast || []) : [];
 
-    buildChart(history0, forecast0, history1, forecast1);
+    const names = chartPlants.map(p => p.plant_name);
+    buildChart(history0, forecast0, history1, forecast1, names);
   } catch (error) {
-    console.error("Failed to load dashboard:", error);
-    updateStatusBar("offline");
+    console.error("Dashboard partial error:", error);
   }
 }
 
@@ -655,7 +676,7 @@ setInterval(() => {
 }, 10000);
 
 function updatePlant(id, status, moisture, pred, sensorData) {
-  const suffix = `_${id}`;
+  const suffix = `${id}`;
   const valueEl = document.getElementById(`value${suffix}`);
   if (valueEl) {
     if (moisture === null || moisture === undefined) {
@@ -683,7 +704,7 @@ function updatePlant(id, status, moisture, pred, sensorData) {
     if (el) el.innerText = `${Number(humidity).toFixed(1)} %`;
   }
 
-  const badge = document.getElementById(`status_${id}`);
+  const badge = document.getElementById(`status${suffix}`);
   badge.innerText = status;
   badge.className = "badge";
 
@@ -699,11 +720,11 @@ function updatePlant(id, status, moisture, pred, sensorData) {
     ? new Date(pred.eta_to_40).toLocaleString()
     : "N/A";
 
-  const etaEl = document.getElementById(`eta_${id}`);
+  const etaEl = document.getElementById(`eta${suffix}`);
   if (etaEl) etaEl.innerText = `${pred.eta_hours?.toFixed(1)} hrs (~${eta})`;
 }
 
-function buildChart(historyA, forecastA, historyB, forecastB) {
+function buildChart(historyA, forecastA, historyB, forecastB, names = ["Plant 1", "Plant 2"]) {
   const isLight = document.body.classList.contains("light");
   const ctx = document.getElementById("chart").getContext("2d");
 
@@ -794,7 +815,7 @@ function buildChart(historyA, forecastA, historyB, forecastB) {
   const datasets = [
         // HISTORY (solid)
         {
-          label: "Plant A",
+          label: names[0] || "Plant 1",
           data: historyDataA,
           borderColor: "#3b82f6",
           borderWidth: 2,
@@ -810,7 +831,7 @@ function buildChart(historyA, forecastA, historyB, forecastB) {
           parsing: true
         },
         {
-          label: "Plant B",
+          label: names[1] || "Plant 2",
           data: historyDataB,
           borderColor: "#f97316",
           borderWidth: 2,
@@ -827,7 +848,7 @@ function buildChart(historyA, forecastA, historyB, forecastB) {
 
         // LIVE POINTS (current observed values)
         {
-          label: "Plant A Live",
+          label: `${names[0] || 'Plant 1'} Live`,
           data: livePointA,
           borderColor: "#3b82f6",
           backgroundColor: "#3b82f6",
@@ -842,7 +863,7 @@ function buildChart(historyA, forecastA, historyB, forecastB) {
           order: 1
         },
         {
-          label: "Plant B Live",
+          label: `${names[1] || 'Plant 2'} Live`,
           data: livePointB,
           borderColor: "#f97316",
           backgroundColor: "#f97316",
@@ -859,7 +880,7 @@ function buildChart(historyA, forecastA, historyB, forecastB) {
 
         // FORECAST (dotted continuation)
         {
-          label: "Plant A Forecast",
+          label: `${names[0] || 'Plant 1'} Forecast`,
           data: forecastDataA,
           borderColor: "#3b82f6",
           borderDash: [5, 5],
@@ -874,7 +895,7 @@ function buildChart(historyA, forecastA, historyB, forecastB) {
           parsing: true
         },
         {
-          label: "Plant B Forecast",
+          label: `${names[1] || 'Plant 2'} Forecast`,
           data: forecastDataB,
           borderColor: "#f97316",
           borderDash: [5, 5],
@@ -929,6 +950,13 @@ function buildChart(historyA, forecastA, historyB, forecastB) {
 }
 
 window.onload = async () => {
+  // Apply theme before any dashboard rendering so the first chart paint is correct.
+  try {
+    applyThemeFromStorage();
+  } catch (err) {
+    // ignore theme bootstrap errors
+  }
+
   // Check for existing session using Supabase
   try {
     const { data: { session } } = await supabaseClient.auth.getSession();
@@ -940,9 +968,9 @@ window.onload = async () => {
       // Initialize status bar
       updateStatusBar("live");
 
-      fetchSummaryOnly(); // render forecast immediately
-      fetchLatestOnly(); // populate UI quickly with minimal payload
-      load(); // then load full dashboard (chart etc.)
+      // fetchSummaryOnly(); // disabled to avoid early chart rebuild flicker
+      // fetchLatestOnly(); // temporarily disabled to avoid partial UI flicker
+      await load(); // load full dashboard (chart etc.) and wait before proceeding
 
       // Always enable continuous auto-refresh (no UI toggle)
       autoRefreshEnabled = true;
@@ -953,34 +981,5 @@ window.onload = async () => {
   } catch (e) {
     console.error("Auth error:", e);
     showAuthSection();
-  }
-
-  // Setup theme toggle (only on dashboard)
-  try {
-    const toggle = document.getElementById("themeToggle");
-    if (toggle) {
-      // Load saved theme preference (default to light)
-      const savedTheme = localStorage.getItem("theme");
-      if (!savedTheme) {
-        document.body.classList.add("light");
-        localStorage.setItem("theme", "light");
-        toggle.checked = true;
-      } else if (savedTheme === "light") {
-        document.body.classList.add("light");
-        toggle.checked = true;
-      }
-
-      toggle.addEventListener("change", () => {
-        if (toggle.checked) {
-          document.body.classList.add("light");
-          localStorage.setItem("theme", "light");
-        } else {
-          document.body.classList.remove("light");
-          localStorage.setItem("theme", "dark");
-        }
-      });
-    }
-  } catch (err) {
-    // ignore theme toggle errors
   }
 };
