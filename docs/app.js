@@ -199,11 +199,20 @@ function applyThemeFromStorage() {
   }
 }
 
-async function openAddPlant() {
-  const plantName = prompt("Enter plant name:");
-  const plantType = prompt("Enter plant type:");
+function togglePlantForm() {
+  const form = document.getElementById("addPlantForm");
+  form.style.display = form.style.display === "none" ? "block" : "none";
+  if (form.style.display === "block") {
+    document.getElementById("newPlantName").focus();
+  }
+}
 
-  if (!plantName) {
+async function submitPlant() {
+  const name = document.getElementById("newPlantName").value;
+  const type = document.getElementById("newPlantType").value;
+
+  if (!name) {
+    showAuthError("Please enter a plant name");
     return;
   }
 
@@ -213,8 +222,8 @@ async function openAddPlant() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         user_id: currentUser.id,
-        plant_name: plantName,
-        plant_type: plantType,
+        plant_name: name,
+        plant_type: type,
       }),
     });
 
@@ -222,7 +231,10 @@ async function openAddPlant() {
       throw new Error("Failed to create plant");
     }
 
-    location.reload();
+    document.getElementById("newPlantName").value = "";
+    document.getElementById("newPlantType").value = "";
+    togglePlantForm();
+    load();
   } catch (err) {
     showAuthError(err.message || "Could not create plant");
   }
@@ -600,25 +612,29 @@ async function load() {
 
     const plants = data.plants || [];
     if (!plants.length) {
-      const firstSection = document.querySelector(".section");
-      if (firstSection) {
-        firstSection.innerHTML = `
-          <div class="card" style="text-align:center; padding:40px;">
-            <h2>No Plants Yet</h2>
-            <p>Add a plant to start monitoring moisture.</p>
-            <button onclick="openAddPlant()">+ Add Plant</button>
-          </div>
-        `;
-      }
+      const cardsContainer = document.getElementById("plantCards");
+      cardsContainer.innerHTML = `
+        <div class="card" style="text-align:center; padding:40px;">
+          <h2>No Plants Yet</h2>
+          <p>Add a plant to start monitoring moisture.</p>
+        </div>
+      `;
+      document.querySelector("#chart").parentElement.style.display = "none";
+      document.getElementById("forecastText").innerText = "";
       return;
     }
 
     // If plants exist but readings are still missing, keep rendering the dashboard.
     const hasAnyData = Object.values(data.latest || {}).some((v) => {
-      return Boolean(v && (v.moisture != null || v.timestamp != null));
+      return v && v.moisture != null;
     });
+    
     if (!hasAnyData) {
       console.log("No latest data yet, rendering dashboard shell.");
+      document.querySelector("#chart").parentElement.style.display = "none";
+      document.getElementById("forecastText").innerText = "";
+    } else {
+      document.querySelector("#chart").parentElement.style.display = "block";
     }
 
     const cardsContainer = document.getElementById("plantCards");
@@ -634,7 +650,9 @@ async function load() {
       updatePlant(index, decision, latest?.moisture, pred, latest);
     });
 
-    buildChart(plants, data);
+    if (hasAnyData) {
+      buildChart(plants, data);
+    }
   } catch (error) {
     console.error("Dashboard partial error:", error);
   }
@@ -671,6 +689,21 @@ setInterval(() => {
 }, 10000);
 
 function updatePlant(index, status, moisture, pred, sensorData) {
+  // Early exit if no data at all
+  if (!sensorData || moisture == null) {
+    const badge = document.getElementById(`status${index}`);
+    const etaEl = document.getElementById(`eta${index}`);
+
+    badge.innerText = "No Data Yet";
+    badge.className = "badge critical";
+
+    if (etaEl) {
+      etaEl.innerText = "Connect ESP32 to start receiving data";
+    }
+
+    return;
+  }
+
   const valueEl = document.getElementById(`value${index}`);
   if (valueEl) {
     if (moisture === null || moisture === undefined) {
@@ -800,17 +833,12 @@ function buildChart(plants, data) {
     });
   });
 
-  // Build time domain from all data points
-  const latestObservedMs = Math.max(
-    ...allPoints.map((p) => (p.x?.getTime ? p.x.getTime() : -Infinity)).filter(ms => ms > 0)
-  ) || Date.now();
-
-  const hourMs = 60 * 60 * 1000;
-  const stabilizedAnchorMs = Math.floor(latestObservedMs / (6 * hourMs)) * (6 * hourMs);
+  // Build time domain - simple 7-day window
+  const now = Date.now();
   const oneWeekMs = 7 * 24 * 60 * 60 * 1000;
 
-  const xMin = new Date(stabilizedAnchorMs - oneWeekMs);
-  const xMax = new Date(stabilizedAnchorMs + oneWeekMs);
+  const xMin = new Date(now - oneWeekMs);
+  const xMax = new Date(now + oneWeekMs);
 
   // Add threshold line
   datasets.push({
