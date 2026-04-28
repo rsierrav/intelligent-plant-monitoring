@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Plant Moisture Dashboard</title>
+    <link rel="stylesheet" href="style.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  </head>
+
+  <body>
+    <div class="header">
+      <h1>Plant Moisture Dashboard</h1>
+
+      <div class="controls">
+        <button onclick="load()">Refresh Data</button>
+
+        <label class="switch">
+          <input type="checkbox" id="themeToggle" />
+          <span class="slider"></span>
+        </label>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Live Moisture + Decision</h2>
+
+      <div class="cards">
+        <div class="card">
+          <h3>Plant A</h3>
+          <div class="value" id="valueA">--%</div>
+          <div class="badge" id="statusA">--</div>
+          <div class="meta" id="etaA"></div>
+        </div>
+
+        <div class="card">
+          <h3>Plant B</h3>
+          <div class="value" id="valueB">--%</div>
+          <div class="badge" id="statusB">--</div>
+          <div class="meta" id="etaB"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Forecast</h2>
+      <div class="forecast-text" id="forecastText"></div>
+      <canvas id="chart"></canvas>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
