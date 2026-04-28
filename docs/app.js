@@ -44,7 +44,7 @@ function startBlink() {
         ds.pointRadius = blinkOn ? 6 : 4;
       }
     });
-    chart.update("none");
+    chart.draw();
   }, 600);
 }
 
@@ -58,7 +58,16 @@ function stopBlink() {
 function createChartOptions(isLight) {
   return {
     responsive: true,
-    animation: false,
+    animation: {
+      duration: 0
+    },
+    transitions: {
+      active: {
+        animation: {
+          duration: 0
+        }
+      }
+    },
     parsing: true,
     normalized: true,
     interaction: {
@@ -97,6 +106,7 @@ function createChartOptions(isLight) {
     scales: {
       x: {
         type: "time",
+        bounds: "data",
         time: {
           unit: "day",
           displayFormats: {
@@ -507,23 +517,14 @@ function buildChart(historyA, forecastA, historyB, forecastB) {
     : Date.now();
   const anchorMs = Number.isFinite(latestObservedMs) ? latestObservedMs : fallbackNowMs;
 
-  // Round anchor to hour to prevent tiny x-axis shifts every refresh.
+  // Round anchor to 6-hour blocks to prevent tiny x-axis shifts every refresh.
   const hourMs = 60 * 60 * 1000;
-  const stabilizedAnchorMs = Math.floor(anchorMs / hourMs) * hourMs;
+  const stabilizedAnchorMs = Math.floor(anchorMs / (6 * hourMs)) * (6 * hourMs);
 
   const oneWeekMs = 7 * 24 * 60 * 60 * 1000;
-  const minWindowStartMs = stabilizedAnchorMs - oneWeekMs;
-  const minWindowEndMs = stabilizedAnchorMs + oneWeekMs;
 
-  const dataMinMs = allPoints.length
-    ? Math.min(...allPoints.map((p) => p.x.getTime()))
-    : minWindowStartMs;
-  const dataMaxMs = allPoints.length
-    ? Math.max(...allPoints.map((p) => p.x.getTime()))
-    : minWindowEndMs;
-
-  const xMin = new Date(Math.min(minWindowStartMs, dataMinMs));
-  const xMax = new Date(Math.max(minWindowEndMs, dataMaxMs));
+  const xMin = new Date(stabilizedAnchorMs - oneWeekMs);
+  const xMax = new Date(stabilizedAnchorMs + oneWeekMs);
 
   const thresholdData =
     xMin && xMax
@@ -660,7 +661,12 @@ function buildChart(historyA, forecastA, historyB, forecastB) {
     return;
   }
 
-  chart.data.datasets = datasets;
+  // Update only the data, not the entire dataset structure
+  datasets.forEach((newDs, i) => {
+    if (chart.data.datasets[i]) {
+      chart.data.datasets[i].data = newDs.data;
+    }
+  });
   chart.update("none");
   startBlink();
 }
