@@ -1,7 +1,7 @@
-from backend.analysis.preprocessing import load_and_prepare_data
-from backend.analysis.smoothing import apply_rolling_average
-from backend.analysis.rate_analysis import compute_rate_of_change
-from backend.analysis.classification import classify_series
+from analysis.preprocessing import load_and_prepare_data
+from analysis.smoothing import apply_rolling_average
+from analysis.rate_analysis import compute_rate_of_change
+from analysis.classification import classify_series
 
 
 def run_reasoning_engine(user_id):
