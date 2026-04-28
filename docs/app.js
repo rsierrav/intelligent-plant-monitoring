@@ -34,30 +34,59 @@ function toggleSignupMode() {
 async function handleLogin() {
   const email = document.getElementById("authEmail").value;
   const password = document.getElementById("authPassword").value;
+  const button = event.target;
 
   if (!email || !password) {
     showAuthError("Email and password required");
     return;
   }
 
-  const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
-
-  if (error) {
-    showAuthError(error.message);
+  if (!email.includes("@")) {
+    showAuthError("Enter a valid email");
     return;
   }
 
-  currentUser = data.user;
-  showDashboard();
+  // Show loading state
+  button.innerText = "Logging in...";
+  button.disabled = true;
+
+  try {
+    const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+
+    if (error) {
+      showAuthError(error.message);
+      button.innerText = "Login";
+      button.disabled = false;
+      return;
+    }
+
+    currentUser = data.user;
+    showDashboard();
+  } catch (err) {
+    showAuthError(err.message || "Login failed");
+    button.innerText = "Login";
+    button.disabled = false;
+  }
 }
 
 async function handleSignup() {
   const email = document.getElementById("signupEmail").value;
   const password = document.getElementById("signupPassword").value;
   const passwordConfirm = document.getElementById("signupPasswordConfirm").value;
+  const button = event.target;
 
   if (!email || !password || !passwordConfirm) {
     showAuthError("All fields required");
+    return;
+  }
+
+  if (!email.includes("@")) {
+    showAuthError("Enter a valid email");
+    return;
+  }
+
+  if (password.length < 6) {
+    showAuthError("Password must be at least 6 characters");
     return;
   }
 
@@ -66,16 +95,28 @@ async function handleSignup() {
     return;
   }
 
-  const { data, error } = await supabaseClient.auth.signUp({ email, password });
+  // Show loading state
+  button.innerText = "Creating account...";
+  button.disabled = true;
 
-  if (error) {
-    showAuthError(error.message);
-    return;
+  try {
+    const { data, error } = await supabaseClient.auth.signUp({ email, password });
+
+    if (error) {
+      showAuthError(error.message);
+      button.innerText = "Sign Up";
+      button.disabled = false;
+      return;
+    }
+
+    // Auto-login after signup
+    currentUser = data.user;
+    showDashboard();
+  } catch (err) {
+    showAuthError(err.message || "Signup failed");
+    button.innerText = "Sign Up";
+    button.disabled = false;
   }
-
-  // Auto-login after signup
-  currentUser = data.user;
-  showDashboard();
 }
 
 async function handleLogout() {

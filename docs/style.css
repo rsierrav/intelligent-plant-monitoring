@@ -334,11 +334,16 @@ input:checked + .slider:before {
   font-size: 14px;
   font-weight: bold;
   cursor: pointer;
-  transition: background 0.2s;
+  transition: background 0.2s, opacity 0.2s;
 }
 
 #authForm button:hover, #signupForm button:hover {
   background: #2563eb;
+}
+
+#authForm button:disabled, #signupForm button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 #authForm button:last-child, #signupForm button:last-child {
@@ -347,6 +352,10 @@ input:checked + .slider:before {
 
 #authForm button:last-child:hover, #signupForm button:last-child:hover {
   background: #4b5563;
+}
+
+#authForm button:last-child:disabled, #signupForm button:last-child:disabled {
+  opacity: 0.6;
 }
 
 #authError {
