@@ -20,6 +20,12 @@ const int wetB = 1272;
 // Sensors
 Adafruit_BME680 bme;
 BH1750 lightMeter;
+bool bmeAvailable = false;
+
+static_assert(
+  WIFI_NETWORK_COUNT == (sizeof(WIFI_PASSWORDS) / sizeof(WIFI_PASSWORDS[0])),
+  "WIFI_SSIDS and WIFI_PASSWORDS must have the same number of entries"
+);
 
 // Helper functions
 int readStable(int pin) {
@@ -39,10 +45,45 @@ float moisturePercent(int reading, int dry, int wet) {
 }
 
 unsigned long lastReconnectAttempt = 0;
+int activeWifiProfile = -1;
 
-void connectToWiFi() {
+bool connectUsingProfile(int profileIndex, unsigned long timeoutMs = 15000) {
+  Serial.print("Trying WiFi: ");
+  Serial.println(WIFI_SSIDS[profileIndex]);
+
+  WiFi.begin(WIFI_SSIDS[profileIndex], WIFI_PASSWORDS[profileIndex]);
+
+  unsigned long start = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - start < timeoutMs) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  if (WiFi.status() == WL_CONNECTED) {
+    activeWifiProfile = profileIndex;
+    Serial.println();
+    Serial.print("Connected to WiFi: ");
+    Serial.println(WIFI_SSIDS[profileIndex]);
+    return true;
+  }
+
+  Serial.println();
+  Serial.print("Failed to connect to WiFi: ");
+  Serial.println(WIFI_SSIDS[profileIndex]);
+  WiFi.disconnect(true);
+  return false;
+}
+
+bool connectToWiFi() {
     Serial.println("Connecting to WiFi...");
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
+  for (size_t i = 0; i < WIFI_NETWORK_COUNT; i++) {
+    if (connectUsingProfile((int)i)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 void checkWiFiConnection() {
@@ -54,8 +95,21 @@ void checkWiFiConnection() {
         // Try reconnect every 10 seconds
         if (now - lastReconnectAttempt > 10000) {
             lastReconnectAttempt = now;
-            WiFi.disconnect();
-            WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+          WiFi.disconnect(true);
+
+          if (activeWifiProfile >= 0 && connectUsingProfile(activeWifiProfile)) {
+            return;
+          }
+
+          for (size_t i = 0; i < WIFI_NETWORK_COUNT; i++) {
+            if ((int)i == activeWifiProfile) {
+              continue;
+            }
+
+            if (connectUsingProfile((int)i)) {
+              return;
+            }
+          }
         }
     }
 }
@@ -139,10 +193,16 @@ void setup() {
   analogSetPinAttenuation(soilB, ADC_11db);
 
   Wire.begin(21, 22);
+  delay(100);
 
-  if (!bme.begin(0x77)) {
-    Serial.println("BME680 not found!");
-    while (1) delay(10);
+  if (bme.begin(0x77)) {
+    bmeAvailable = true;
+    Serial.println("BME680 found at 0x77");
+  } else if (bme.begin(0x76)) {
+    bmeAvailable = true;
+    Serial.println("BME680 found at 0x76");
+  } else {
+    Serial.println("BME680 not found at 0x77 or 0x76. Continuing without env sensor.");
   }
 
   if (!lightMeter.begin()) {
@@ -150,11 +210,9 @@ void setup() {
     while (1) delay(10);
   }
 
-  connectToWiFi();
-  // Wait for first connection
-  while (WiFi.status() != WL_CONNECTED) {
-      delay(500);
-      Serial.print(".");
+  while (!connectToWiFi()) {
+      Serial.println("Retrying WiFi profiles in 10 seconds...");
+      delay(10000);
   }
 
   Serial.println("System ready.");
@@ -169,31 +227,42 @@ void loop() {
   float pctA = moisturePercent(rawA, dryA, wetA);
   float pctB = moisturePercent(rawB, dryB, wetB);
 
-  // Read env
-  if (!bme.performReading()) {
-    Serial.println("ERROR: BME read failed");
-    delay(5000);
-    return;
-  }
-
   float lux = lightMeter.readLightLevel();
-  float tempC = bme.temperature;
-  float hum = bme.humidity;
-  float pressure_hPa = bme.pressure / 100.0f;
-  float gas_kOhm = bme.gas_resistance / 1000.0f;
+  float tempC = 0.0f;
+  float hum = 0.0f;
+  float pressure_hPa = 0.0f;
+  float gas_kOhm = 0.0f;
+  bool hasEnvReading = false;
+
+  // Read env when available.
+  if (bmeAvailable) {
+    if (bme.performReading()) {
+      tempC = bme.temperature;
+      hum = bme.humidity;
+      pressure_hPa = bme.pressure / 100.0f;
+      gas_kOhm = bme.gas_resistance / 1000.0f;
+      hasEnvReading = true;
+    } else {
+      Serial.println("WARN: BME read failed this cycle");
+    }
+  }
 
   // Log locally
   Serial.println("--------------------------------------------------");
   Serial.print("A raw="); Serial.print(rawA); Serial.print(" A%="); Serial.println(pctA, 1);
   Serial.print("B raw="); Serial.print(rawB); Serial.print(" B%="); Serial.println(pctB, 1);
-  Serial.print("Temp="); Serial.print(tempC, 2);
-  Serial.print("C Hum="); Serial.print(hum, 2);
-  Serial.print("% Press="); Serial.print(pressure_hPa, 2);
-  Serial.print("hPa Gas="); Serial.print(gas_kOhm, 2);
-  Serial.print("kOhm Lux="); Serial.println(lux, 2);
+  if (hasEnvReading) {
+    Serial.print("Temp="); Serial.print(tempC, 2);
+    Serial.print("C Hum="); Serial.print(hum, 2);
+    Serial.print("% Press="); Serial.print(pressure_hPa, 2);
+    Serial.print("hPa Gas="); Serial.print(gas_kOhm, 2);
+    Serial.print("kOhm Lux="); Serial.println(lux, 2);
+  } else {
+    Serial.print("Env=N/A Lux="); Serial.println(lux, 2);
+  }
 
   // Cloud inserts
-  bool okEnv = postEnvironment(tempC, hum, pressure_hPa, gas_kOhm, lux);
+  bool okEnv = hasEnvReading ? postEnvironment(tempC, hum, pressure_hPa, gas_kOhm, lux) : false;
   bool okA = postPlantReading(PLANT_A_ID, rawA, pctA);
   bool okB = postPlantReading(PLANT_B_ID, rawB, pctB);
 
