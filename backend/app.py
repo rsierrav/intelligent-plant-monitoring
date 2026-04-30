@@ -196,6 +196,11 @@ def build_dashboard_payload(user_id):
 
         return payload
     except ValueError:
+        try:
+            base_latest.update(get_latest_raw_moisture_by_plant(user_id))
+        except Exception:
+            pass
+
         base = {
             "plants": plants_meta,
             "latest": base_latest,

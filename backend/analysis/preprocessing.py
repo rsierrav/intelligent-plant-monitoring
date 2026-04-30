@@ -230,7 +230,7 @@ def load_and_prepare_data(user_id):
         raise ValueError("No data returned from Supabase")
 
     # Convert timestamp and normalize to Eastern time for display
-    df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+    df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True, format="mixed")
     df["timestamp"] = df["timestamp"].dt.tz_convert("US/Eastern")
 
     # Map plant IDs to names
