@@ -124,6 +124,7 @@ String buildPlantReadingJson(const char* plantId, int raw, float pct) {
 
 unsigned long lastReconnectAttempt = 0;
 int activeWifiProfile = -1;
+bool wasConnected = false;
 
 bool connectUsingProfile(int profileIndex, unsigned long timeoutMs = 15000) {
   Serial.print("Trying WiFi: ");
@@ -250,15 +251,13 @@ bool postPlantReadingJson(const String& json) {
 }
 
 bool appendOfflineJson(const char* path, const String& json, const char* savedMessage) {
-  if (LittleFS.exists(path)) {
-    File existing = LittleFS.open(path, FILE_READ);
-    if (existing) {
-      if ((size_t)existing.size() > OFFLINE_QUEUE_MAX_BYTES) {
-        Serial.print("WARN: offline queue too large: ");
-        Serial.println(path);
-      }
-      existing.close();
+  File existing = LittleFS.open(path, FILE_READ);
+  if (existing) {
+    if ((size_t)existing.size() > OFFLINE_QUEUE_MAX_BYTES) {
+      Serial.print("WARN: offline queue too large: ");
+      Serial.println(path);
     }
+    existing.close();
   }
 
   bool createNew = !LittleFS.exists(path);
@@ -388,15 +387,7 @@ void setup() {
 }
 
 void loop() {
-  checkWiFiConnection();
-
-  bool wifiConnected = (WiFi.status() == WL_CONNECTED);
-  if (wifiConnected) {
-    syncSystemTime();
-    flushOfflineQueues();
-  }
-
-  // Read soil
+  // Read sensors first
   int rawA = readStable(soilA);
   int rawB = readStable(soilB);
   float pctA = moisturePercent(rawA, dryA, wetA);
@@ -436,41 +427,50 @@ void loop() {
     Serial.print("Env=N/A Lux="); Serial.println(lux, 2);
   }
 
+  // Build JSON (timestamp generated here)
   String envJson = hasEnvReading ? buildEnvironmentJson(tempC, hum, pressure_hPa, gas_kOhm, lux) : "";
   String plantAJson = buildPlantReadingJson(PLANT_A_ID, rawA, pctA);
   String plantBJson = buildPlantReadingJson(PLANT_B_ID, rawB, pctB);
 
+  // Check WiFi AFTER generating timestamps
+  checkWiFiConnection();
+  bool isConnected = (WiFi.status() == WL_CONNECTED);
+
+  // Only flush when we transition from disconnected -> connected
+  if (isConnected && !wasConnected) {
+    // ensure clock is synced for future readings, then flush saved items
+    syncSystemTime();
+    flushOfflineQueues();
+  }
+
   bool okEnv = false;
   if (hasEnvReading) {
-    if (wifiConnected) {
+    if (isConnected) {
       okEnv = postEnvironmentJson(envJson);
-      if (!okEnv) {
-        appendOfflineJson(OFFLINE_ENV_LOG, envJson, "Saved env reading offline");
-      }
+      if (!okEnv) appendOfflineJson(OFFLINE_ENV_LOG, envJson, "Saved env reading offline");
     } else {
       appendOfflineJson(OFFLINE_ENV_LOG, envJson, "Saved env reading offline");
     }
   }
 
   bool okA = false;
-  if (wifiConnected) {
+  if (isConnected) {
     okA = postPlantReadingJson(plantAJson);
-    if (!okA) {
-      appendOfflineJson(OFFLINE_PLANT_LOG, plantAJson, "Saved plant reading offline");
-    }
+    if (!okA) appendOfflineJson(OFFLINE_PLANT_LOG, plantAJson, "Saved plant reading offline");
   } else {
     appendOfflineJson(OFFLINE_PLANT_LOG, plantAJson, "Saved plant reading offline");
   }
 
   bool okB = false;
-  if (wifiConnected) {
+  if (isConnected) {
     okB = postPlantReadingJson(plantBJson);
-    if (!okB) {
-      appendOfflineJson(OFFLINE_PLANT_LOG, plantBJson, "Saved plant reading offline");
-    }
+    if (!okB) appendOfflineJson(OFFLINE_PLANT_LOG, plantBJson, "Saved plant reading offline");
   } else {
     appendOfflineJson(OFFLINE_PLANT_LOG, plantBJson, "Saved plant reading offline");
   }
+
+  // update connection state for next loop
+  wasConnected = isConnected;
 
   Serial.print("Insert results -> env: ");
   Serial.print(okEnv ? "OK" : "FAIL");
