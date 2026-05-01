@@ -129,7 +129,11 @@ def get_latest_source_timestamp(user_id):
 
             data = response.data or []
             if data:
-                latest = pd.to_datetime(data[0]["timestamp"], utc=True)
+                timestamp_value = data[0].get("timestamp")
+                if timestamp_value is None:
+                    raise ValueError("Latest reading is missing timestamp")
+
+                latest = pd.to_datetime(timestamp_value, utc=True)
                 return latest.tz_convert("US/Eastern")
 
             break
@@ -243,12 +247,21 @@ def get_latest_raw_moisture_by_plant(user_id):
             }
             continue
 
+        timestamp_value = row.get("timestamp")
+        moisture_value = row.get("soil_moisture_percent")
+        if timestamp_value is None or moisture_value is None:
+            latest_by_plant[plant_name] = {
+                "moisture": None,
+                "timestamp": None,
+            }
+            continue
+
         ts = pd.to_datetime(
-            row["timestamp"],
+            timestamp_value,
             utc=True,
         ).tz_convert("US/Eastern")
         latest_by_plant[plant_name] = {
-            "moisture": float(row["soil_moisture_percent"]),
+            "moisture": float(moisture_value),
             "timestamp": ts.isoformat(),
             }
 
@@ -355,6 +368,8 @@ def load_and_prepare_data(user_id):
     # Ensure both plants exist
     for col in DEFAULT_PLANT_ALIASES:
         if col not in pivot.columns:
-            pivot[col] = None
+            pivot[col] = float("nan")
+
+    pivot = pivot.astype(float)
 
     return pivot

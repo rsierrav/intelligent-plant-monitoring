@@ -24,6 +24,7 @@ let blinkOn = true;
 let lastSeenTimestamp = {};
 let originalDashboardMarkup = null;
 let aliasToIndex = {};
+let lastForecastEtaByPlant = {};
 
 // ============ ADMIN SETUP ============
 const ADMIN_EMAILS = ["grader@test.com"];
@@ -36,6 +37,26 @@ let allUsers = [];          // cache of all users for dropdown
 function getActiveUserId() {
   // If admin has selected a different user, use that; otherwise use current user
   return selectedUserId || currentUser.id;
+}
+
+function getSavedAdminUserId() {
+  try {
+    return localStorage.getItem("selectedAdminUserId");
+  } catch (err) {
+    return null;
+  }
+}
+
+function saveSelectedAdminUserId(userId) {
+  try {
+    if (userId) {
+      localStorage.setItem("selectedAdminUserId", userId);
+    } else {
+      localStorage.removeItem("selectedAdminUserId");
+    }
+  } catch (err) {
+    // localStorage can be unavailable in some browser privacy modes.
+  }
 }
 
 function toggleSignupMode() {
@@ -77,6 +98,7 @@ async function handleLogin() {
     currentUser = data.user;
     isAdmin = ADMIN_EMAILS.includes(currentUser.email);
     selectedUserId = null;  // reset selection
+    saveSelectedAdminUserId(null);
     
     // Auto-sync user to users table
     try {
@@ -167,6 +189,7 @@ async function handleSignup() {
     currentUser = data.user;
     isAdmin = ADMIN_EMAILS.includes(currentUser.email);
     selectedUserId = null;  // reset selection
+    saveSelectedAdminUserId(null);
     
     // Auto-sync user to users table
     try {
@@ -504,19 +527,136 @@ function updateLastPlantReadingTime(latestMap) {
   updateStatusBar(getReadingStatus());
 }
 
-function buildForecastText(plants, prediction) {
-  const forecastLines = (plants || [])
-    .map((plant) => {
-      const pred = prediction?.[plant.alias];
-      const etaHours = pred?.eta_hours;
-      if (typeof etaHours !== "number" || Number.isNaN(etaHours)) return null;
-      return `${plant.plant_name}: ~${etaHours.toFixed(1)} hours until dry`;
-    })
-    .filter(Boolean);
+function hasForecastPoints(pred) {
+  return Array.isArray(pred?.forecast) && pred.forecast.length > 0;
+}
 
-  return forecastLines.length
-    ? forecastLines.join("\n")
-    : "Forecast unavailable until this plant has at least 5 moisture readings.";
+function getForecastStorageKey(alias) {
+  return `forecastEta:${getActiveUserId()}:${alias}`;
+}
+
+function loadStoredForecastEta(alias) {
+  const memoryValue = lastForecastEtaByPlant[getForecastStorageKey(alias)];
+  if (memoryValue) return memoryValue;
+
+  try {
+    const stored = localStorage.getItem(getForecastStorageKey(alias));
+    return stored ? JSON.parse(stored) : null;
+  } catch (err) {
+    return null;
+  }
+}
+
+function saveForecastEta(alias, value) {
+  const key = getForecastStorageKey(alias);
+  lastForecastEtaByPlant[key] = value;
+
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch (err) {
+    // localStorage can be unavailable in some browser privacy modes.
+  }
+}
+
+function getForecastEtaMessage(alias, pred) {
+  const etaHours = pred?.eta_hours;
+
+  if (typeof etaHours === "number" && !Number.isNaN(etaHours)) {
+    const eta = pred.eta_to_40
+      ? new Date(pred.eta_to_40).toLocaleString()
+      : "N/A";
+    const value = {
+      text: `Forecast: reaches 40% around ${eta} (~${etaHours.toFixed(1)} hrs)`,
+      savedAt: new Date().toISOString()
+    };
+    saveForecastEta(alias, value);
+    return value.text;
+  }
+
+  const stored = loadStoredForecastEta(alias);
+  if (stored?.text) {
+    return `${stored.text}\nNeed new sensor readings to update forecast`;
+  }
+
+  return "";
+}
+
+function isFreshReading(reading) {
+  if (!reading?.timestamp) return false;
+
+  const timestamp = new Date(reading.timestamp);
+  if (Number.isNaN(timestamp.getTime())) return false;
+
+  return ((new Date() - timestamp) / 1000) <= STALE_READING_SECONDS;
+}
+
+function hasAnyFreshLatestMoisture(plants, latest) {
+  return (plants || []).some((plant) => {
+    const reading = latest?.[plant.alias];
+    const moisture = reading?.moisture;
+    return (
+      moisture !== null &&
+      moisture !== undefined &&
+      !Number.isNaN(Number(moisture)) &&
+      isFreshReading(reading)
+    );
+  });
+}
+
+function buildForecastText(plants, prediction, latest) {
+  if (hasAnyFreshLatestMoisture(plants, latest)) {
+    return "";
+  }
+
+  return "No recent sensor reading. Forecast will update when new moisture data arrives.";
+}
+
+function renderPlantCards(plants) {
+  const cardsContainer = document.getElementById("plantCards");
+  if (!cardsContainer) return;
+
+  cardsContainer.innerHTML = "";
+  aliasToIndex = {};
+  plants.forEach((plant, index) => {
+    cardsContainer.innerHTML += createPlantCard(plant, index);
+    aliasToIndex[plant.alias] = index;
+  });
+}
+
+function renderNoPlants() {
+  lastUpdateTime = null;
+  updateStatusBar("offline");
+
+  const cardsContainer = document.getElementById("plantCards");
+  if (cardsContainer) {
+    cardsContainer.innerHTML = `
+      <div class="card" style="text-align:center; padding:40px;">
+        <h2>No Plants Yet</h2>
+        <p>Add or assign a plant to start monitoring moisture.</p>
+      </div>
+    `;
+  }
+
+  const chartPanel = document.querySelector("#chart")?.parentElement;
+  if (chartPanel) chartPanel.style.display = "none";
+
+  const forecastText = document.getElementById("forecastText");
+  if (forecastText) forecastText.innerText = "";
+}
+
+function renderDashboardError(message = "Dashboard data could not load.") {
+  lastUpdateTime = null;
+  updateStatusBar("offline");
+
+  const cardsContainer = document.getElementById("plantCards");
+  if (cardsContainer) {
+    cardsContainer.innerHTML = `
+      <div class="card" style="text-align:center; padding:40px;">
+        <h2>Dashboard Unavailable</h2>
+        <p>${message}</p>
+      </div>
+    `;
+  }
 }
 
 function hasRenderableChartData(plants, data) {
@@ -578,6 +718,7 @@ async function onAdminUserSelect(event) {
   } else {
     selectedUserId = userId;
   }
+  saveSelectedAdminUserId(selectedUserId);
   
   // Clear state to prevent plant card mixing
   aliasToIndex = {};
@@ -667,6 +808,8 @@ async function populateUserDropdown() {
       select.appendChild(option);
     });
   }
+
+  select.value = selectedUserId || "";
 }
 
 async function adminCreatePlant() {
@@ -848,24 +991,28 @@ async function fetchLatestOnly() {
     const activeUserId = getActiveUserId();
     // Ensure the UI shell exists: fetch plants metadata (lightweight)
     const plantsRes = await fetch(`${API_URL}/dashboard/plants?user_id=${activeUserId}`);
-    if (!plantsRes.ok) return;
+    if (!plantsRes.ok) {
+      throw new Error("Plants request failed");
+    }
     const plantsData = await plantsRes.json();
     const plants = plantsData.plants || [];
+
+    if (!plants.length) {
+      renderNoPlants();
+      return;
+    }
 
     const cardsContainer = document.getElementById("plantCards");
     // If cards are missing or count differs, build the UI shell immediately
     if (!cardsContainer || cardsContainer.children.length !== plants.length) {
-      cardsContainer.innerHTML = "";
-      aliasToIndex = {};
-      plants.forEach((p, idx) => {
-        cardsContainer.innerHTML += createPlantCard(p, idx);
-        aliasToIndex[p.alias] = idx;
-      });
+      renderPlantCards(plants);
     }
 
     // Now fetch latest small payload and populate values
     const res = await fetch(`${API_URL}/dashboard/latest?user_id=${activeUserId}`);
-    if (!res.ok) return;
+    if (!res.ok) {
+      throw new Error("Latest readings request failed");
+    }
     const data = await res.json();
     const latestMap = data.latest || {};
 
@@ -909,7 +1056,8 @@ async function fetchLatestOnly() {
 
     updateLastPlantReadingTime(latestMap);
   } catch (err) {
-    // ignore lightweight failures; full load() will handle errors
+    renderDashboardError("Could not load plants. Check that the local backend is running.");
+    throw err;
   }
 }
 
@@ -924,7 +1072,7 @@ async function fetchSummaryOnly() {
     const plants = data.plants || [];
     if (plants.length === 0) return;
 
-    document.getElementById("forecastText").innerText = buildForecastText(plants, data.prediction);
+    document.getElementById("forecastText").innerText = buildForecastText(plants, data.prediction, data.latest);
     updateLastPlantReadingTime(data.latest || {});
 
     try {
@@ -1046,17 +1194,7 @@ async function load() {
 
     const plants = data.plants || [];
     if (!plants.length) {
-      lastUpdateTime = null;
-      updateStatusBar("offline");
-      const cardsContainer = document.getElementById("plantCards");
-      cardsContainer.innerHTML = `
-        <div class="card" style="text-align:center; padding:40px;">
-          <h2>No Plants Yet</h2>
-          <p>Add a plant to start monitoring moisture.</p>
-        </div>
-      `;
-      document.querySelector("#chart").parentElement.style.display = "none";
-      document.getElementById("forecastText").innerText = "";
+      renderNoPlants();
       return;
     }
 
@@ -1075,15 +1213,14 @@ async function load() {
 
     const cardsContainer = document.getElementById("plantCards");
     const existingCardCount = cardsContainer.children.length;
-    const shouldRebuildCards = existingCardCount !== plants.length;
+    const firstMappedIndex = aliasToIndex[plants[0]?.alias];
+    const shouldRebuildCards =
+      existingCardCount !== plants.length ||
+      firstMappedIndex === undefined ||
+      !document.getElementById(`status${firstMappedIndex}`);
 
     if (shouldRebuildCards) {
-      cardsContainer.innerHTML = "";
-      aliasToIndex = {};
-      plants.forEach((plant, index) => {
-        cardsContainer.innerHTML += createPlantCard(plant, index);
-        aliasToIndex[plant.alias] = index;
-      });
+      renderPlantCards(plants);
     }
 
     plants.forEach((plant, index) => {
@@ -1092,10 +1229,10 @@ async function load() {
       const pred = data.prediction?.[plant.alias] || {};
       const decision = data.decision?.[plant.alias] || "No data yet";
 
-      updatePlant(idx, decision, latest?.moisture, pred, latest);
+      updatePlant(idx, plant.alias, decision, latest?.moisture, pred, latest);
     });
 
-    document.getElementById("forecastText").innerText = buildForecastText(plants, data.prediction);
+    document.getElementById("forecastText").innerText = buildForecastText(plants, data.prediction, data.latest);
 
     // Re-apply environment values after full load so cards do not flicker back to '--'
     try {
@@ -1129,6 +1266,7 @@ async function load() {
     }
   } catch (error) {
     console.error("Dashboard partial error:", error);
+    renderDashboardError("Could not load dashboard data. Check that the local backend is running.");
   }
 }
 
@@ -1160,14 +1298,16 @@ setInterval(() => {
   updateStatusBar(getReadingStatus());
 }, 10000);
 
-function updatePlant(index, status, moisture, pred, sensorData) {
+function updatePlant(index, alias, status, moisture, pred, sensorData) {
   // Early exit if no data at all
   if (!sensorData || moisture == null) {
     const badge = document.getElementById(`status${index}`);
     const etaEl = document.getElementById(`eta${index}`);
 
-    badge.innerText = "No Data Yet";
-    badge.className = "badge critical";
+    if (badge) {
+      badge.innerText = "No Data Yet";
+      badge.className = "badge critical";
+    }
 
     if (etaEl) {
       etaEl.innerText = "Connect ESP32 to start receiving data";
@@ -1204,6 +1344,8 @@ function updatePlant(index, status, moisture, pred, sensorData) {
   }
 
   const badge = document.getElementById(`status${index}`);
+  if (!badge) return;
+
   badge.innerText = status;
   badge.className = "badge";
 
@@ -1215,18 +1357,16 @@ function updatePlant(index, status, moisture, pred, sensorData) {
     badge.classList.add("critical");
   }
 
-  const eta = pred.eta_to_40
-    ? new Date(pred.eta_to_40).toLocaleString()
-    : "N/A";
-  const etaText = typeof pred.eta_hours === "number" && !Number.isNaN(pred.eta_hours)
-    ? `${pred.eta_hours.toFixed(1)} hrs (~${eta})`
-    : "Forecast needs at least 5 moisture readings";
   const readingTime = sensorData?.timestamp
     ? new Date(sensorData.timestamp).toLocaleString()
     : "--";
+  const forecastEtaText = getForecastEtaMessage(alias, pred);
+  const etaLines = forecastEtaText
+    ? `${forecastEtaText}\nLast reading: ${readingTime}`
+    : `Last reading: ${readingTime}`;
 
   const etaEl = document.getElementById(`eta${index}`);
-  if (etaEl) etaEl.innerText = `${etaText}\nLast reading: ${readingTime}`;
+  if (etaEl) etaEl.innerText = etaLines;
 }
 
 function buildChart(plants, data) {
@@ -1373,12 +1513,16 @@ window.onload = async () => {
       currentUser = session.user;
       // Restore admin status after session recovery
       isAdmin = ADMIN_EMAILS.includes(currentUser.email);
-      selectedUserId = null;  // reset selection
+      selectedUserId = null;
       
       // If admin, fetch all users for dropdown
       if (isAdmin) {
         try {
           allUsers = await fetchAllUsers();
+          const savedUserId = getSavedAdminUserId();
+          if (savedUserId && allUsers.some((user) => user.id === savedUserId)) {
+            selectedUserId = savedUserId;
+          }
         } catch (err) {
           console.error("Failed to fetch users:", err);
         }
@@ -1409,11 +1553,7 @@ window.onload = async () => {
     }
     
     // Start full dashboard load in background so UI remains responsive
-    try {
-      load();
-    } catch (err) {
-      console.error("load() failed:", err);
-    }
+    load();
     
     
     // Always enable continuous auto-refresh (no UI toggle)

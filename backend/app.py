@@ -9,14 +9,14 @@ try:
     from backend.analysis.reasoning_engine import run_reasoning_engine, get_latest_decision
     from backend.analysis.preprocessing import get_latest_raw_moisture_by_plant
     from backend.analysis.preprocessing import supabase as supabase_client
-    from backend.analysis.preprocessing import _build_plant_alias_map
+    from backend.analysis.preprocessing import DEFAULT_PLANT_ALIASES
     from backend.analysis.preprocessing import get_latest_environment_reading
     from backend.prediction import predict_plant
 except ImportError:
     from analysis.reasoning_engine import run_reasoning_engine, get_latest_decision
     from analysis.preprocessing import get_latest_raw_moisture_by_plant
     from analysis.preprocessing import supabase as supabase_client
-    from analysis.preprocessing import _build_plant_alias_map
+    from analysis.preprocessing import DEFAULT_PLANT_ALIASES
     from analysis.preprocessing import get_latest_environment_reading
     from prediction import predict_plant
 
@@ -125,16 +125,29 @@ def get_user_plants(user_id):
         return []
 
 
+def build_alias_map_from_plants(plants):
+    alias_map = {}
+    for idx, plant in enumerate(plants):
+        plant_id = plant.get("id")
+        if not plant_id:
+            continue
+
+        if idx < len(DEFAULT_PLANT_ALIASES):
+            alias_map[plant_id] = DEFAULT_PLANT_ALIASES[idx]
+        else:
+            alias_map[plant_id] = f"Plant_{idx + 1}"
+
+    return alias_map
+
+
 def build_dashboard_payload(user_id):
     # Ensure we return plant entities only for plants that belong to the user
     plants = get_user_plants(user_id)
     if not plants:
         return empty_dashboard_payload()
 
-    # Use preprocessing's alias map so keys in latest/history/prediction match
-    from analysis.preprocessing import _build_plant_alias_map
-
-    alias_map = _build_plant_alias_map(user_id) or {}
+    # Use the same aliases as preprocessing without making a second DB request.
+    alias_map = build_alias_map_from_plants(plants)
 
     base_latest = {}
     base_history = {}
@@ -157,7 +170,9 @@ def build_dashboard_payload(user_id):
             "plant_type": plant.get("plant_type"),
         })
 
-    # Try to compute actual analytics; if it fails, return the base payload
+    # Try to compute actual analytics; if it fails, return the base payload.
+    # The dashboard shell and latest readings should still render even when
+    # history, classification, or forecasting cannot be computed.
     try:
         df, smoothed, rate, states = run_reasoning_engine(user_id)
 
@@ -206,7 +221,8 @@ def build_dashboard_payload(user_id):
         }
 
         return payload
-    except ValueError:
+    except Exception:
+        app.logger.exception("Dashboard analytics failed for user_id=%s", user_id)
         try:
             base_latest.update(get_latest_raw_moisture_by_plant(user_id))
         except Exception:
@@ -266,7 +282,7 @@ def dashboard_latest():
 
     try:
         latest = get_latest_raw_moisture_by_plant(user_id)
-    except ValueError:
+    except Exception:
         return jsonify({"latest": empty_latest_payload()})
 
     return jsonify({"latest": latest})
@@ -285,7 +301,7 @@ def dashboard_env():
     except ValueError:
         return jsonify({"env": {}})
     except Exception:
-        return jsonify({"env": {}}), 500
+        return jsonify({"env": {}})
 
     return jsonify({"env": env})
 
@@ -304,8 +320,9 @@ def dashboard_plants():
     except Exception:
         plants = []
 
-    # Build alias map so frontend can map plant ids to aliases
-    alias_map = _build_plant_alias_map(user_id) or {}
+    # Build alias map from the already-fetched plants so this endpoint stays
+    # lightweight and does not fail because of a duplicate Supabase request.
+    alias_map = build_alias_map_from_plants(plants)
 
     plants_meta = []
     for idx, p in enumerate(plants):
