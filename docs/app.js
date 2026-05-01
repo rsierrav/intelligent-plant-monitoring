@@ -867,9 +867,20 @@ async function fetchSummaryOnly() {
     const res = await fetch(`${API_URL}/dashboard/summary?user_id=${activeUserId}`);
     if (!res.ok) return;
     const data = await res.json();
-    // Build forecast summary text for up to two plants
+    // Build forecast summary text for all plants that have predictions
     const plants = data.plants || [];
     if (plants.length === 0) return;
+
+    const forecastLines = plants
+      .map((plant) => {
+        const pred = data.prediction?.[plant.alias];
+        const etaHours = pred?.eta_hours;
+        if (typeof etaHours !== "number" || Number.isNaN(etaHours)) return null;
+        return `${plant.plant_name}: ~${etaHours.toFixed(1)} hours until dry`;
+      })
+      .filter(Boolean);
+
+    document.getElementById("forecastText").innerText = forecastLines.join("\n");
 
     const aliases = plants.map(p => p.alias);
     const first = aliases[0];
@@ -877,11 +888,6 @@ async function fetchSummaryOnly() {
 
     const pred1 = data.prediction?.[first];
     const pred2 = data.prediction?.[second];
-
-    let forecastText = "";
-    if (pred1) forecastText += `${plants[0].plant_name}: ~${pred1.eta_hours?.toFixed(1)} hours until dry`;
-    if (pred2) forecastText += `\n${plants[1].plant_name}: ~${pred2.eta_hours?.toFixed(1)} hours until dry`;
-    document.getElementById("forecastText").innerText = forecastText;
 
     try {
       const futureOnly1 = (pred1?.forecast || []).map((p) => ({ x: new Date(p.t), y: p.value }));
