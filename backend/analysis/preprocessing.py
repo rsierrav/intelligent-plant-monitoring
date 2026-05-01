@@ -139,6 +139,55 @@ def get_latest_source_timestamp(user_id):
     raise ValueError("No timestamp data returned from Supabase")
 
 
+def get_latest_environment_reading(user_id):
+    """Return the most recent environment reading (temperature, humidity, light).
+    Returns a dict with keys: temperature, humidity, light, timestamp (ISO) or None
+    """
+    # Ensure user has plants (same guard as other helpers)
+    plant_alias_map = _build_plant_alias_map(user_id)
+    if not plant_alias_map:
+        raise ValueError("No plants assigned to this user")
+
+    try:
+        # Guard: only expose env data to users that actually have at least
+        # one plant reading for their assigned plants.
+        plant_ids = list(plant_alias_map.keys())
+        plant_probe = supabase.table("plant_readings") \
+            .select("timestamp") \
+            .in_("plant_id", plant_ids) \
+            .order("timestamp", desc=True) \
+            .limit(1) \
+            .execute()
+        if not (plant_probe.data or []):
+            raise ValueError("No plant readings available for this user")
+
+        resp = supabase.table("environment_readings") \
+            .select("timestamp, temperature, humidity, light_level") \
+            .order("timestamp", desc=True) \
+            .limit(1) \
+            .execute()
+        data = resp.data or []
+        if not data:
+            raise ValueError("No environment readings available")
+
+        row = data[0]
+        ts = pd.to_datetime(row.get("timestamp"), utc=True).tz_convert("US/Eastern")
+        return {
+            "temperature": float(row.get("temperature")) if row.get("temperature") is not None else None,
+            "humidity": float(row.get("humidity")) if row.get("humidity") is not None else None,
+            "light": float(row.get("light_level")) if row.get("light_level") is not None else None,
+            "timestamp": ts.isoformat(),
+        }
+    except Exception:
+        # Fall back to cached CSV if present
+        cached_df = _load_cached_raw_data(user_id)
+        if cached_df is None:
+            raise
+
+        # env readings are not stored in cached plant CSV; nothing to return
+        raise ValueError("No environment readings available")
+
+
 def get_latest_raw_moisture_by_plant(user_id):
     plant_alias_map = _build_plant_alias_map(user_id)
     if not plant_alias_map:

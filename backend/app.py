@@ -6,6 +6,8 @@ from flask_cors import CORS
 from analysis.reasoning_engine import run_reasoning_engine, get_latest_decision
 from analysis.preprocessing import get_latest_raw_moisture_by_plant
 from analysis.preprocessing import supabase as supabase_client
+from analysis.preprocessing import _build_plant_alias_map
+from analysis.preprocessing import get_latest_environment_reading
 from prediction import predict_plant
 import pandas as pd
 
@@ -215,17 +217,12 @@ def get_cached_dashboard_payload(user_id):
     now = time.time()
     cached = dashboard_cache.get(user_id)
     if cached and (now - cached["time"]) < CACHE_TTL_SECONDS:
-        elapsed = now - cached["time"]
-        print(f"[CACHE HIT] user_id={user_id}, elapsed={elapsed:.1f}s", flush=True)
         return cached["data"]
-
-    print(f"[CACHE MISS] user_id={user_id}, computing...", flush=True)
     payload = build_dashboard_payload(user_id)
     dashboard_cache[user_id] = {
         "time": now,
         "data": payload,
     }
-    print(f"[CACHE STORED] user_id={user_id}", flush=True)
     return payload
 
 
@@ -257,6 +254,55 @@ def dashboard_latest():
         return jsonify({"latest": empty_latest_payload()})
 
     return jsonify({"latest": latest})
+
+
+@app.route("/dashboard/env")
+def dashboard_env():
+    """Return latest environment reading (temperature, humidity, light)
+    """
+    user_id = resolve_user_id()
+    if not user_id:
+        return jsonify({"error": "user_id is required"}), 400
+
+    try:
+        env = get_latest_environment_reading(user_id)
+    except ValueError:
+        return jsonify({"env": {}})
+    except Exception:
+        return jsonify({"env": {}}), 500
+
+    return jsonify({"env": env})
+
+
+@app.route("/dashboard/plants")
+def dashboard_plants():
+    """Return lightweight list of plant metadata for a user with alias keys.
+    This avoids triggering heavy analytics and is used to build the UI shell.
+    """
+    user_id = resolve_user_id()
+    if not user_id:
+        return jsonify({"error": "user_id is required"}), 400
+
+    try:
+        plants = get_user_plants(user_id)
+    except Exception:
+        plants = []
+
+    # Build alias map so frontend can map plant ids to aliases
+    alias_map = _build_plant_alias_map(user_id) or {}
+
+    plants_meta = []
+    for idx, p in enumerate(plants):
+        pid = p.get("id")
+        alias = alias_map.get(pid) or f"Plant_{idx+1}"
+        plants_meta.append({
+            "id": pid,
+            "plant_name": p.get("plant_name"),
+            "plant_type": p.get("plant_type"),
+            "alias": alias,
+        })
+
+    return jsonify({"plants": plants_meta})
 
 
 @app.route("/plants/create", methods=["POST"])

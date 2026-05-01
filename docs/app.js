@@ -22,6 +22,7 @@ let blinkOn = true;
 // track last seen per-plant timestamps from /dashboard/latest
 let lastSeenTimestamp = {};
 let originalDashboardMarkup = null;
+let aliasToIndex = {};
 
 // ============ AUTH FUNCTIONS ============
 
@@ -67,14 +68,13 @@ async function handleLogin() {
     // Initialize dashboard on login
     updateStatusBar("live");
     
-    console.log("[LOGIN] Starting initialization...", new Date().toLocaleTimeString());
     try {
       await fetchLatestOnly();
-      await load();
+      // Start full dashboard load in background (don't block UI)
+      load();
     } catch (err) {
-      console.error("[LOGIN] Initialization failed:", err);
+      console.error("Initialization failed:", err);
     }
-    console.log("[LOGIN] Dashboard initialized", new Date().toLocaleTimeString());
     
     // Enable auto-refresh
     autoRefreshEnabled = true;
@@ -133,14 +133,12 @@ async function handleSignup() {
     // Initialize dashboard on signup
     updateStatusBar("live");
     
-    console.log("[SIGNUP] Starting initialization...", new Date().toLocaleTimeString());
     try {
       await fetchLatestOnly();
-      await load();
+      load();
     } catch (err) {
-      console.error("[SIGNUP] Initialization failed:", err);
+      console.error("Initialization failed:", err);
     }
-    console.log("[SIGNUP] Dashboard initialized", new Date().toLocaleTimeString());
     
     // Enable auto-refresh
     autoRefreshEnabled = true;
@@ -163,7 +161,7 @@ function showAuthError(message) {
 }
 
 function showAuthSection() {
-  document.getElementById("authSection").style.display = "block";
+  document.getElementById("authSection").style.display = "flex";
   document.querySelector(".container").style.display = "none";
   document.querySelector(".status-bar").style.display = "none";
 }
@@ -440,32 +438,66 @@ function setAutoRefresh(enabled) {
 // Fetch only the latest small payload to populate UI immediately
 async function fetchLatestOnly() {
   try {
+    // Ensure the UI shell exists: fetch plants metadata (lightweight)
+    const plantsRes = await fetch(`${API_URL}/dashboard/plants?user_id=${currentUser.id}`);
+    if (!plantsRes.ok) return;
+    const plantsData = await plantsRes.json();
+    const plants = plantsData.plants || [];
+
+    const cardsContainer = document.getElementById("plantCards");
+    // If cards are missing or count differs, build the UI shell immediately
+    if (!cardsContainer || cardsContainer.children.length !== plants.length) {
+      cardsContainer.innerHTML = "";
+      aliasToIndex = {};
+      plants.forEach((p, idx) => {
+        cardsContainer.innerHTML += createPlantCard(p, idx);
+        aliasToIndex[p.alias] = idx;
+      });
+    }
+
+    // Now fetch latest small payload and populate values
     const res = await fetch(`${API_URL}/dashboard/latest?user_id=${currentUser.id}`);
     if (!res.ok) return;
     const data = await res.json();
     const latestMap = data.latest || {};
+
     Object.keys(latestMap).forEach((alias) => {
       const latest = latestMap[alias];
-      const suffix = `_${alias}`;
-      const valueEl = document.getElementById(`value${suffix}`);
+      const idx = aliasToIndex[alias];
+      if (idx === undefined) return;
+
+      const valueEl = document.getElementById(`value${idx}`);
       if (valueEl) {
         valueEl.innerText = latest && latest.moisture != null ? `${latest.moisture}%` : "--%";
       }
-      if (latest) {
-        if (latest.light !== undefined) {
-          const el = document.getElementById(`light${suffix}`);
-          if (el) el.innerText = `${Number(latest.light).toFixed(1)} lux`;
-        }
-        if (latest.temperature !== undefined) {
-          const el = document.getElementById(`temp${suffix}`);
-          if (el) el.innerText = `${Number(latest.temperature).toFixed(1)} °C`;
-        }
-        if (latest.humidity !== undefined) {
-          const el = document.getElementById(`humidity${suffix}`);
-          if (el) el.innerText = `${Number(latest.humidity).toFixed(1)} %`;
-        }
-      }
     });
+
+    // Fetch global environment readings and populate env fields on each card
+    try {
+      const envRes = await fetch(`${API_URL}/dashboard/env?user_id=${currentUser.id}`);
+      if (envRes && envRes.ok) {
+        const envData = await envRes.json();
+        const env = envData.env || {};
+        Object.keys(latestMap).forEach((alias) => {
+          const idx = aliasToIndex[alias];
+          if (idx === undefined) return;
+          if (env.temperature !== undefined && env.temperature !== null) {
+            const el = document.getElementById(`temp${idx}`);
+            if (el) el.innerText = `${Number(env.temperature).toFixed(1)} °C`;
+          }
+          if (env.humidity !== undefined && env.humidity !== null) {
+            const el = document.getElementById(`humidity${idx}`);
+            if (el) el.innerText = `${Number(env.humidity).toFixed(1)} %`;
+          }
+          if (env.light !== undefined && env.light !== null) {
+            const el = document.getElementById(`light${idx}`);
+            if (el) el.innerText = `${Number(env.light).toFixed(1)} lux`;
+          }
+        });
+      }
+    } catch (err) {
+      // ignore env fetch errors; frontend can continue without env
+    }
 
     lastUpdateTime = new Date();
     updateStatusBar("live");
@@ -629,10 +661,9 @@ async function fetchSummaryOnly() {
 }
 
 async function load() {
-  console.log("[LOAD] Starting dashboard load...", new Date().toLocaleTimeString());
   try {
     const res = await fetch(`${API_URL}/dashboard?user_id=${currentUser.id}`);
-    console.log("[LOAD] Response received after", new Date().toLocaleTimeString());
+    
     if (!res.ok) {
       throw new Error("Dashboard request failed");
     }
@@ -663,7 +694,6 @@ async function load() {
     });
     
     if (!hasAnyData) {
-      console.log("No latest data yet, rendering dashboard shell.");
       document.querySelector("#chart").parentElement.style.display = "none";
       document.getElementById("forecastText").innerText = "";
     } else {
@@ -671,17 +701,52 @@ async function load() {
     }
 
     const cardsContainer = document.getElementById("plantCards");
-    cardsContainer.innerHTML = "";
+    const existingCardCount = cardsContainer.children.length;
+    const shouldRebuildCards = existingCardCount !== plants.length;
+
+    if (shouldRebuildCards) {
+      cardsContainer.innerHTML = "";
+      aliasToIndex = {};
+      plants.forEach((plant, index) => {
+        cardsContainer.innerHTML += createPlantCard(plant, index);
+        aliasToIndex[plant.alias] = index;
+      });
+    }
 
     plants.forEach((plant, index) => {
-      cardsContainer.innerHTML += createPlantCard(plant, index);
-
+      const idx = aliasToIndex[plant.alias] !== undefined ? aliasToIndex[plant.alias] : index;
       const latest = data.latest?.[plant.alias] || null;
       const pred = data.prediction?.[plant.alias] || {};
       const decision = data.decision?.[plant.alias] || "No data yet";
 
-      updatePlant(index, decision, latest?.moisture, pred, latest);
+      updatePlant(idx, decision, latest?.moisture, pred, latest);
     });
+
+    // Re-apply environment values after full load so cards do not flicker back to '--'
+    try {
+      const envRes = await fetch(`${API_URL}/dashboard/env?user_id=${currentUser.id}`);
+      if (envRes && envRes.ok) {
+        const envData = await envRes.json();
+        const env = envData.env || {};
+        plants.forEach((plant, index) => {
+          const idx = aliasToIndex[plant.alias] !== undefined ? aliasToIndex[plant.alias] : index;
+          if (env.temperature !== undefined && env.temperature !== null) {
+            const el = document.getElementById(`temp${idx}`);
+            if (el) el.innerText = `${Number(env.temperature).toFixed(1)} °C`;
+          }
+          if (env.humidity !== undefined && env.humidity !== null) {
+            const el = document.getElementById(`humidity${idx}`);
+            if (el) el.innerText = `${Number(env.humidity).toFixed(1)} %`;
+          }
+          if (env.light !== undefined && env.light !== null) {
+            const el = document.getElementById(`light${idx}`);
+            if (el) el.innerText = `${Number(env.light).toFixed(1)} lux`;
+          }
+        });
+      }
+    } catch (err) {
+      // ignore env refresh errors
+    }
 
     if (hasAnyData) {
       buildChart(plants, data);
@@ -922,16 +987,13 @@ window.onload = async () => {
   // Check for existing session using Supabase
   try {
     const { data: { session } } = await supabaseClient.auth.getSession();
-    console.log("[ONLOAD] Session check complete. Session exists:", !!session);
     
     // If no session but user is already set (e.g., from previous login before refresh), skip re-auth
     if (session) {
       currentUser = session.user;
-      console.log("[ONLOAD] Current user set from session:", currentUser.id);
     } else if (currentUser) {
-      console.log("[ONLOAD] Current user already set, skipping session check. User:", currentUser.id);
+      // currentUser already set
     } else {
-      console.log("[ONLOAD] No session found, showing auth");
       showAuthSection();
       return;
     }
@@ -946,23 +1008,20 @@ window.onload = async () => {
     // Initialize status bar
     updateStatusBar("live");
 
-    console.log("[INIT] Starting to fetch latest only...", new Date().toLocaleTimeString());
     // Fetch lightweight latest data first for instant UI response
     try {
       await fetchLatestOnly();
     } catch (err) {
-      console.error("[INIT] fetchLatestOnly failed:", err);
+      console.error("fetchLatestOnly failed:", err);
     }
     
-    console.log("[INIT] Latest data fetched, now loading full dashboard...", new Date().toLocaleTimeString());
-    // Load full dashboard (wait for it this time to ensure initial plants appear)
+    // Start full dashboard load in background so UI remains responsive
     try {
-      await load();
+      load();
     } catch (err) {
-      console.error("[INIT] load() failed:", err);
+      console.error("load() failed:", err);
     }
     
-    console.log("[INIT] Dashboard loaded", new Date().toLocaleTimeString());
     
     // Always enable continuous auto-refresh (no UI toggle)
     autoRefreshEnabled = true;
