@@ -363,3 +363,21 @@ input:checked + .slider:before {
   font-size: 14px;
   margin-top: 15px;
 }
+/* Admin panel input readability */
+#adminPanel input[type="text"] {
+  background: #1f2937 !important;
+  color: #f9fafb !important;
+  border: 1px solid #4b5563 !important;
+}
+
+#adminPanel input[type="text"]::placeholder {
+  color: #d1d5db !important;
+}
+
+#adminPanel input[type="text"]:-webkit-autofill,
+#adminPanel input[type="text"]:-webkit-autofill:hover,
+#adminPanel input[type="text"]:-webkit-autofill:focus {
+  -webkit-text-fill-color: #f9fafb;
+  -webkit-box-shadow: 0 0 0px 1000px #1f2937 inset;
+  transition: background-color 9999s ease-in-out 0s;
+}
