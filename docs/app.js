@@ -16,7 +16,8 @@ let chart;
 let interval;
 let lastUpdateTime = null;
 let autoRefreshEnabled = false;
-// blinking control for live point indicator
+const STALE_READING_SECONDS = 180;
+// blinking control for fresh latest-reading indicators
 let blinkInterval = null;
 let blinkOn = true;
 // track last seen per-plant timestamps from /dashboard/latest
@@ -362,8 +363,10 @@ function startBlink() {
     blinkOn = !blinkOn;
     if (!chart) return;
     chart.data.datasets.forEach((ds) => {
-      if (ds.label && ds.label.includes("Live")) {
+      if (ds.label && ds.label.includes("Latest Reading") && getReadingStatus() === "live") {
         ds.pointRadius = blinkOn ? 6 : 4;
+      } else if (ds.label && ds.label.includes("Latest Reading")) {
+        ds.pointRadius = 5;
       }
     });
     chart.draw();
@@ -401,7 +404,7 @@ function createChartOptions(isLight) {
       legend: {
         labels: {
           color: isLight ? "#111827" : "#ffffff",
-          filter: (item) => !item.text.includes(" Live")
+          filter: (item) => !item.text.includes(" Latest Reading")
         },
         position: "top"
       },
@@ -472,6 +475,48 @@ function createChartOptions(isLight) {
       }
     }
   };
+}
+
+function getNewestPlantReadingTime(latestMap) {
+  let newest = null;
+
+  Object.values(latestMap || {}).forEach((reading) => {
+    if (!reading?.timestamp) return;
+    const timestamp = new Date(reading.timestamp);
+    if (Number.isNaN(timestamp.getTime())) return;
+    if (!newest || timestamp > newest) {
+      newest = timestamp;
+    }
+  });
+
+  return newest;
+}
+
+function getReadingStatus() {
+  if (!lastUpdateTime) return "offline";
+
+  const secondsAgo = (new Date() - lastUpdateTime) / 1000;
+  return secondsAgo > STALE_READING_SECONDS ? "stale" : "live";
+}
+
+function updateLastPlantReadingTime(latestMap) {
+  lastUpdateTime = getNewestPlantReadingTime(latestMap);
+  updateStatusBar(getReadingStatus());
+}
+
+function buildForecastText(plants, prediction) {
+  const forecastLines = (plants || [])
+    .map((plant) => {
+      const pred = prediction?.[plant.alias];
+      const etaHours = pred?.eta_hours;
+      if (typeof etaHours !== "number" || Number.isNaN(etaHours)) return null;
+      return `${plant.plant_name}: ~${etaHours.toFixed(1)} hours until dry`;
+    })
+    .filter(Boolean);
+
+  return forecastLines.length
+    ? forecastLines.join("\n")
+    : "No forecast available yet.";
 }
 
 function setAutoRefresh(enabled) {
@@ -852,8 +897,7 @@ async function fetchLatestOnly() {
       // ignore env fetch errors; frontend can continue without env
     }
 
-    lastUpdateTime = new Date();
-    updateStatusBar("live");
+    updateLastPlantReadingTime(latestMap);
   } catch (err) {
     // ignore lightweight failures; full load() will handle errors
   }
@@ -867,46 +911,32 @@ async function fetchSummaryOnly() {
     const res = await fetch(`${API_URL}/dashboard/summary?user_id=${activeUserId}`);
     if (!res.ok) return;
     const data = await res.json();
-    // Build forecast summary text for all plants that have predictions
     const plants = data.plants || [];
     if (plants.length === 0) return;
 
-    const forecastLines = plants
-      .map((plant) => {
-        const pred = data.prediction?.[plant.alias];
-        const etaHours = pred?.eta_hours;
-        if (typeof etaHours !== "number" || Number.isNaN(etaHours)) return null;
-        return `${plant.plant_name}: ~${etaHours.toFixed(1)} hours until dry`;
-      })
-      .filter(Boolean);
-
-    document.getElementById("forecastText").innerText = forecastLines.join("\n");
-
-    const aliases = plants.map(p => p.alias);
-    const first = aliases[0];
-    const second = aliases[1];
-
-    const pred1 = data.prediction?.[first];
-    const pred2 = data.prediction?.[second];
+    document.getElementById("forecastText").innerText = buildForecastText(plants, data.prediction);
+    updateLastPlantReadingTime(data.latest || {});
 
     try {
-      const futureOnly1 = (pred1?.forecast || []).map((p) => ({ x: new Date(p.t), y: p.value }));
-      const futureOnly2 = (pred2?.forecast || []).map((p) => ({ x: new Date(p.t), y: p.value }));
+      const colors = ["#3b82f6", "#f97316", "#8b5cf6", "#10b981", "#ec4899", "#f59e0b"];
+      const datasets = [];
 
-      const latest1 = data.latest?.[first];
-      const latest2 = data.latest?.[second];
-      const livePoint1 = latest1 && latest1.timestamp ? [{ x: new Date(latest1.timestamp), y: latest1.moisture }] : [];
-      const livePoint2 = latest2 && latest2.timestamp ? [{ x: new Date(latest2.timestamp), y: latest2.moisture }] : [];
+      plants.forEach((plant, index) => {
+        const color = colors[index % colors.length];
+        const pred = data.prediction?.[plant.alias];
+        const latest = data.latest?.[plant.alias];
+        const futureOnly = (pred?.forecast || []).map((p) => ({ x: new Date(p.t), y: p.value }));
+        const livePoint = latest && latest.timestamp
+          ? [{ x: new Date(latest.timestamp), y: latest.moisture }]
+          : [];
+        const forecastData = livePoint.length
+          ? [{ x: livePoint[0].x, y: null }, ...futureOnly]
+          : futureOnly;
 
-      const forecastData1 = livePoint1.length ? [{ x: livePoint1[0].x, y: null }, ...futureOnly1] : futureOnly1;
-      const forecastData2 = livePoint2.length ? [{ x: livePoint2[0].x, y: null }, ...futureOnly2] : futureOnly2;
-
-      // minimal datasets for forecasts + live + threshold
-      const datasets = [
-        {
-          label: `${plants[0].plant_name} Forecast`,
-          data: forecastData1,
-          borderColor: "#3b82f6",
+        datasets.push({
+          label: `${plant.plant_name} Forecast`,
+          data: forecastData,
+          borderColor: color,
           borderDash: [5, 5],
           borderWidth: 2,
           fill: false,
@@ -917,27 +947,13 @@ async function fetchSummaryOnly() {
           spanGaps: false,
           order: 3,
           parsing: true
-        },
-        {
-          label: `${plants[1]?.plant_name || 'Plant'} Forecast`,
-          data: forecastData2,
-          borderColor: "#f97316",
-          borderDash: [5, 5],
-          borderWidth: 2,
-          fill: false,
-          tension: 0,
-          pointRadius: 0,
-          pointHoverRadius: 4,
-          pointHitRadius: 8,
-          spanGaps: false,
-          order: 3,
-          parsing: true
-        },
-        {
-          label: `${plants[0].plant_name} Live`,
-          data: livePoint1,
-          borderColor: "#3b82f6",
-          backgroundColor: "#3b82f6",
+        });
+
+        datasets.push({
+          label: `${plant.plant_name} Latest Reading`,
+          data: livePoint,
+          borderColor: color,
+          backgroundColor: color,
           showLine: false,
           pointRadius: 5,
           pointHoverRadius: 4,
@@ -947,38 +963,24 @@ async function fetchSummaryOnly() {
           pointBorderWidth: 2,
           z: 10,
           order: 1
-        },
-        {
-          label: `${plants[1]?.plant_name || 'Plant'} Live`,
-          data: livePoint2,
-          borderColor: "#f97316",
-          backgroundColor: "#f97316",
-          showLine: false,
-          pointRadius: 5,
-          pointHoverRadius: 4,
-          pointHitRadius: 8,
-          pointStyle: "circle",
-          pointBorderColor: "#ffffff",
-          pointBorderWidth: 2,
-          z: 10,
-          order: 1
-        },
-        {
-          label: "Threshold (40%)",
-          data: [
-            { x: new Date(Date.now() - 7 * 24 * 3600 * 1000), y: 40 },
-            { x: new Date(Date.now() + 7 * 24 * 3600 * 1000), y: 40 }
-          ],
-          borderColor: "red",
-          borderDash: [5, 5],
-          borderWidth: 2,
-          fill: false,
-          pointRadius: 0,
-          pointHoverRadius: 0,
-          tension: 0,
-          order: 4
-        }
-      ];
+        });
+      });
+
+      datasets.push({
+        label: "Threshold (40%)",
+        data: [
+          { x: new Date(Date.now() - 7 * 24 * 3600 * 1000), y: 40 },
+          { x: new Date(Date.now() + 7 * 24 * 3600 * 1000), y: 40 }
+        ],
+        borderColor: "red",
+        borderDash: [5, 5],
+        borderWidth: 2,
+        fill: false,
+        pointRadius: 0,
+        pointHoverRadius: 0,
+        tension: 0,
+        order: 4
+      });
 
       if (!chart) {
         const ctx = document.getElementById("chart").getContext("2d");
@@ -989,7 +991,8 @@ async function fetchSummaryOnly() {
         });
         startBlink();
       } else {
-        const hasHistory = chart.data.datasets.some((ds) => ds.label === plants[0].plant_name || ds.label === plants[1]?.plant_name);
+        const plantNames = new Set(plants.map((plant) => plant.plant_name));
+        const hasHistory = chart.data.datasets.some((ds) => plantNames.has(ds.label));
         if (hasHistory) {
           datasets.forEach((newDs) => {
             const idx = chart.data.datasets.findIndex((ds) => ds.label === newDs.label);
@@ -1031,12 +1034,10 @@ async function load() {
 
     const data = await res.json();
 
-    // Update last update time
-    lastUpdateTime = new Date();
-    updateStatusBar("live");
-
     const plants = data.plants || [];
     if (!plants.length) {
+      lastUpdateTime = null;
+      updateStatusBar("offline");
       const cardsContainer = document.getElementById("plantCards");
       cardsContainer.innerHTML = `
         <div class="card" style="text-align:center; padding:40px;">
@@ -1048,6 +1049,8 @@ async function load() {
       document.getElementById("forecastText").innerText = "";
       return;
     }
+
+    updateLastPlantReadingTime(data.latest || {});
 
     // If plants exist but readings are still missing, keep rendering the dashboard.
     const hasAnyData = Object.values(data.latest || {}).some((v) => {
@@ -1082,6 +1085,8 @@ async function load() {
 
       updatePlant(idx, decision, latest?.moisture, pred, latest);
     });
+
+    document.getElementById("forecastText").innerText = buildForecastText(plants, data.prediction);
 
     // Re-apply environment values after full load so cards do not flicker back to '--'
     try {
@@ -1122,30 +1127,28 @@ function updateStatusBar(status) {
   const indicator = document.getElementById("statusIndicator");
   const statusText = document.getElementById("statusText");
   const lastUpdatedEl = document.getElementById("lastUpdated");
+  const displayStatus = status === "live" ? getReadingStatus() : status;
 
-  indicator.className = `indicator-dot ${status}`;
+  indicator.className = `indicator-dot ${displayStatus}`;
 
-  if (status === "live") {
+  if (displayStatus === "live") {
     statusText.innerText = "Live";
-  } else if (status === "stale") {
+  } else if (displayStatus === "stale") {
     statusText.innerText = "Stale";
   } else {
     statusText.innerText = "Offline";
   }
 
   if (lastUpdateTime) {
-    lastUpdatedEl.innerText = `Last updated: ${lastUpdateTime.toLocaleTimeString()}`;
+    lastUpdatedEl.innerText = `Last plant reading: ${lastUpdateTime.toLocaleString()}`;
+  } else {
+    lastUpdatedEl.innerText = "Last plant reading: --";
   }
 }
 
 // Monitor connection status (mark as stale if no update for 180 seconds)
 setInterval(() => {
-  if (lastUpdateTime) {
-    const secondsAgo = (new Date() - lastUpdateTime) / 1000;
-    if (secondsAgo > 180) {
-      updateStatusBar("stale");
-    }
-  }
+  updateStatusBar(getReadingStatus());
 }, 10000);
 
 function updatePlant(index, status, moisture, pred, sensorData) {
@@ -1206,9 +1209,15 @@ function updatePlant(index, status, moisture, pred, sensorData) {
   const eta = pred.eta_to_40
     ? new Date(pred.eta_to_40).toLocaleString()
     : "N/A";
+  const etaText = typeof pred.eta_hours === "number" && !Number.isNaN(pred.eta_hours)
+    ? `${pred.eta_hours.toFixed(1)} hrs (~${eta})`
+    : "Forecast unavailable";
+  const readingTime = sensorData?.timestamp
+    ? new Date(sensorData.timestamp).toLocaleString()
+    : "--";
 
   const etaEl = document.getElementById(`eta${index}`);
-  if (etaEl) etaEl.innerText = `${pred.eta_hours?.toFixed(1)} hrs (~${eta})`;
+  if (etaEl) etaEl.innerText = `${etaText}\nLast reading: ${readingTime}`;
 }
 
 function buildChart(plants, data) {
@@ -1236,7 +1245,7 @@ function buildChart(plants, data) {
       ? [{ x: history[history.length - 1].x, y: null }, ...forecast]
       : forecast;
 
-    // Live point is the last observed data point
+    // Latest reading point is the last observed data point
     const livePoint = history.length ? [history[history.length - 1]] : [];
 
     allPoints.push(...history, ...forecastData, ...livePoint);
@@ -1258,9 +1267,9 @@ function buildChart(plants, data) {
       parsing: true
     });
 
-    // Live point dataset
+    // Latest reading point dataset
     datasets.push({
-      label: `${plant.plant_name} Live`,
+      label: `${plant.plant_name} Latest Reading`,
       data: livePoint,
       borderColor: color,
       backgroundColor: color,
