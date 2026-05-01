@@ -1,13 +1,17 @@
 import os
 import matplotlib.pyplot as plt
 
+PLOT_DIR = "data/processed"
+
 
 def plot_baseline(df):
-    os.makedirs("data/processed", exist_ok=True)
+    os.makedirs(PLOT_DIR, exist_ok=True)
 
     df.plot(title="Baseline Soil Moisture Comparison")
     plt.xlabel("Time")
     plt.ylabel("Moisture (%)")
 
-    plt.savefig("data/processed/baseline.png")
-    plt.show()
+    path = os.path.join(PLOT_DIR, "baseline.png")
+    plt.savefig(path, bbox_inches="tight")
+    plt.close()
+    return path

@@ -1,9 +1,11 @@
 import matplotlib.pyplot as plt
 import os
 
+PLOT_DIR = "data/processed"
+
 
 def plot_time_to_dry(df):
-    os.makedirs("data/processed", exist_ok=True)
+    os.makedirs(PLOT_DIR, exist_ok=True)
 
     results = {}
 
@@ -42,5 +44,7 @@ def plot_time_to_dry(df):
     plt.title("Average Time to Dry")
     plt.ylabel("Hours")
 
-    plt.savefig("data/processed/time_to_dry.png")
-    plt.show()
+    path = os.path.join(PLOT_DIR, "time_to_dry.png")
+    plt.savefig(path, bbox_inches="tight")
+    plt.close()
+    return path

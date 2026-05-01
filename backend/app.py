@@ -3,13 +3,22 @@ import time
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS
-from analysis.reasoning_engine import run_reasoning_engine, get_latest_decision
-from analysis.preprocessing import get_latest_raw_moisture_by_plant
-from analysis.preprocessing import supabase as supabase_client
-from analysis.preprocessing import _build_plant_alias_map
-from analysis.preprocessing import get_latest_environment_reading
-from prediction import predict_plant
 import pandas as pd
+
+try:
+    from backend.analysis.reasoning_engine import run_reasoning_engine, get_latest_decision
+    from backend.analysis.preprocessing import get_latest_raw_moisture_by_plant
+    from backend.analysis.preprocessing import supabase as supabase_client
+    from backend.analysis.preprocessing import _build_plant_alias_map
+    from backend.analysis.preprocessing import get_latest_environment_reading
+    from backend.prediction import predict_plant
+except ImportError:
+    from analysis.reasoning_engine import run_reasoning_engine, get_latest_decision
+    from analysis.preprocessing import get_latest_raw_moisture_by_plant
+    from analysis.preprocessing import supabase as supabase_client
+    from analysis.preprocessing import _build_plant_alias_map
+    from analysis.preprocessing import get_latest_environment_reading
+    from prediction import predict_plant
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})

@@ -8,8 +8,9 @@ This project is an IoT plant dashboard that reads plant, soil moisture, and envi
 - `backend/analysis/` - data loading, smoothing, rate analysis, classification, and watering decision logic.
 - `backend/prediction.py` - forecast logic used by the dashboard prediction cards.
 - `docs/` - static frontend dashboard files. `index.html` loads `app.js`, `style.css`, and `config.js`.
-- `main.py` - local analysis script that generates plots and prints the latest plant watering decisions.
-- `experiments/` and `visualization/` - plotting and analysis helpers used by `main.py`.
+- `main.py` - capstone analysis script that generates plot files and prints the latest plant watering decisions.
+- `experiments/` and `visualization/` - plotting helpers used by `main.py`.
+- `data/processed/` - generated plot output from `main.py`. This folder is created when the script runs and is not committed.
 - `PlantMonitoringBoard/` - microcontroller/PlatformIO code for the physical plant monitoring board.
 
 ## Requirements
@@ -105,13 +106,35 @@ The frontend calls the local Flask API configured in `docs/config.js`.
 
 ## Run the analysis script
 
-To run the standalone analysis and generate local plots:
+To run the standalone analysis and generate local plots, either set `DEMO_USER_ID` in `.env` or pass a Supabase user id directly:
 
 ```bash
 python main.py
 ```
 
-This uses the same Supabase environment variables and prints the latest watering decisions in the terminal.
+```bash
+python main.py your-user-uuid
+```
+
+This uses the same Supabase environment variables as the dashboard. It prints the latest watering decisions in the terminal and saves these plots:
+
+- `data/processed/baseline.png`
+- `data/processed/rolling_average.png`
+- `data/processed/watering_trends.png`
+- `data/processed/time_to_dry.png`
+- `data/processed/rolling_with_events.png`
+
+## Capstone review guide
+
+For a quick code review, start with these files:
+
+1. `backend/analysis/preprocessing.py` - pulls and prepares Supabase time-series data.
+2. `backend/analysis/reasoning_engine.py` - runs smoothing, rate-of-change, and classification.
+3. `backend/analysis/classification.py` - contains the watering decision rules.
+4. `backend/prediction.py` - estimates future moisture trend and time to dry.
+5. `backend/app.py` - serves the dashboard API.
+6. `docs/app.js` - frontend dashboard behavior and API calls.
+7. `main.py` - reproducible plot-generation entry point.
 
 ## Build / production notes
 

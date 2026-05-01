@@ -2,6 +2,7 @@ import os
 import matplotlib.pyplot as plt
 
 SPIKE_THRESHOLD = 2
+PLOT_DIR = "data/processed"
 
 
 def detect_spikes(rate_df):
@@ -12,10 +13,12 @@ def detect_spikes(rate_df):
 
 
 def plot_watering(df):
-    os.makedirs("data/processed", exist_ok=True)
+    os.makedirs(PLOT_DIR, exist_ok=True)
 
     df.plot(title="Watering Experiment Moisture Trends")
     plt.ylabel("Moisture (%)")
 
-    plt.savefig("data/processed/watering_trends.png")
-    plt.show()
+    path = os.path.join(PLOT_DIR, "watering_trends.png")
+    plt.savefig(path, bbox_inches="tight")
+    plt.close()
+    return path

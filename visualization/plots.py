@@ -1,7 +1,8 @@
 import os
 import matplotlib.pyplot as plt
 
-os.makedirs("data/processed", exist_ok=True)
+PLOT_DIR = "data/processed"
+os.makedirs(PLOT_DIR, exist_ok=True)
 
 
 def plot_rolling(df, rolling):
@@ -12,8 +13,10 @@ def plot_rolling(df, rolling):
     ax.set_ylabel("Moisture (%)")
     ax.legend(["Raw A", "Raw B", "Smoothed A", "Smoothed B"])
 
-    plt.savefig("data/processed/rolling_average.png")
-    plt.show()
+    path = os.path.join(PLOT_DIR, "rolling_average.png")
+    plt.savefig(path, bbox_inches="tight")
+    plt.close()
+    return path
 
 
 def plot_rolling_with_events(df, smoothed, rate):
@@ -40,5 +43,7 @@ def plot_rolling_with_events(df, smoothed, rate):
     unique = dict(zip(labels, handles))
     ax.legend(unique.values(), unique.keys())
 
-    plt.savefig("data/processed/rolling_with_events.png")
-    plt.show()
+    path = os.path.join(PLOT_DIR, "rolling_with_events.png")
+    plt.savefig(path, bbox_inches="tight")
+    plt.close()
+    return path
