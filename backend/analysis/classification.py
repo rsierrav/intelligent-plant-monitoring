@@ -16,14 +16,10 @@ def classify(moisture, rate):
 def classify_series(df, rate_df):
     states = df.copy()
 
-    states["Plant_A_state"] = [
-        classify(df["Plant_A"][i], rate_df["Plant_A"][i])
-        for i in df.index
-    ]
-
-    states["Plant_B_state"] = [
-        classify(df["Plant_B"][i], rate_df["Plant_B"][i])
-        for i in df.index
-    ]
+    for plant in ("Plant_A", "Plant_B"):
+        states[f"{plant}_state"] = [
+            classify(moisture, rate)
+            for moisture, rate in zip(df[plant].to_numpy(), rate_df[plant].to_numpy())
+        ]
 
     return states

@@ -17,6 +17,7 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 DEFAULT_PLANT_ALIASES = ["Plant_A", "Plant_B"]
+ANALYSIS_LOOKBACK_HOURS = int(os.getenv("ANALYSIS_LOOKBACK_HOURS", "336"))
 
 
 def _safe_user_key(user_id):
@@ -73,15 +74,19 @@ def _load_cached_raw_data(user_id):
     return df
 
 
-def _fetch_batch(plant_ids, offset, batch_size, max_retries=3):
+def _fetch_batch(plant_ids, offset, batch_size, cutoff_timestamp=None, max_retries=3):
     last_error = None
 
     for attempt in range(max_retries):
         try:
-            response = supabase.table("plant_readings") \
+            query = supabase.table("plant_readings") \
                 .select("plant_id, timestamp, soil_moisture_percent") \
-                .in_("plant_id", plant_ids) \
-                .order("timestamp", desc=False) \
+                .in_("plant_id", plant_ids)
+
+            if cutoff_timestamp is not None:
+                query = query.gte("timestamp", cutoff_timestamp)
+
+            response = query.order("timestamp", desc=False) \
                 .range(offset, offset + batch_size - 1) \
                 .execute()
             return response.data
@@ -269,6 +274,16 @@ def load_and_prepare_data(user_id):
         raise ValueError("No plants assigned to this user")
 
     plant_ids = list(plant_alias_map.keys())
+    cutoff_timestamp = None
+
+    if ANALYSIS_LOOKBACK_HOURS > 0:
+        try:
+            latest = get_latest_source_timestamp(user_id)
+            cutoff = latest - pd.Timedelta(hours=ANALYSIS_LOOKBACK_HOURS)
+            cutoff_timestamp = cutoff.tz_convert("UTC").isoformat()
+        except Exception:
+            cutoff_timestamp = None
+
     all_data = []
     offset = 0
     batch_size = 1000
@@ -277,7 +292,7 @@ def load_and_prepare_data(user_id):
     # Pagination loop
     while True:
         try:
-            batch = _fetch_batch(plant_ids, offset, batch_size)
+            batch = _fetch_batch(plant_ids, offset, batch_size, cutoff_timestamp)
         except Exception:
             cached_df = _load_cached_raw_data(user_id)
             if cached_df is None:
