@@ -353,5 +353,43 @@ def assign_plant():
     return jsonify({"success": True, "data": response.data})
 
 
+@app.route("/plants/delete", methods=["POST"])
+def delete_plant():
+    """Delete a plant by ID (blocked if plant is protected)."""
+    data = request.get_json(silent=True) or {}
+    plant_id = data.get("plant_id")
+
+    if not plant_id:
+        return jsonify({"error": "plant_id is required"}), 400
+
+    try:
+        # Check if plant is protected
+        plant_response = (
+            supabase_client.table("plants")
+            .select("is_protected")
+            .eq("id", plant_id)
+            .execute()
+        )
+        
+        if plant_response.data and len(plant_response.data) > 0:
+            if plant_response.data[0].get("is_protected", False):
+                return jsonify({"error": "Cannot delete protected plant"}), 403
+        
+        # Plant is not protected, proceed with deletion
+        response = (
+            supabase_client.table("plants")
+            .delete()
+            .eq("id", plant_id)
+            .execute()
+        )
+        
+        # Clear cache since plant was deleted
+        dashboard_cache.clear()
+        
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 if __name__ == "__main__":
     app.run(debug=True)

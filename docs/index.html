@@ -5,6 +5,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Plant Moisture Dashboard</title>
     <link rel="stylesheet" href="style.css" />
+    <style>
+      #assignPlantSelect, #assignUserSelect {
+        color-scheme: light dark;
+      }
+      #assignPlantSelect option, #assignUserSelect option {
+        background: var(--card);
+        color: inherit;
+      }
+      #assignPlantSelect option:checked, #assignUserSelect option:checked {
+        background: #3b82f6;
+        color: white;
+      }
+    </style>
     <script src="config.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/luxon@3"></script>
@@ -35,12 +48,21 @@
     </div>
 
     <!-- Status Bar -->
-    <div class="status-bar" style="display: none;">
-      <div class="status-indicator">
-        <span id="statusIndicator" class="indicator-dot live"></span>
-        <span id="statusText">Live</span>
+    <div class="status-bar">
+      <div style="display: flex; align-items: center; gap: 20px;">
+        <div class="status-indicator">
+          <span id="statusIndicator" class="indicator-dot live"></span>
+          <span id="statusText">Live</span>
+        </div>
+        <div id="lastUpdated" class="last-updated">Last updated: --</div>
       </div>
-      <div id="lastUpdated" class="last-updated">Last updated: --</div>
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <label style="font-size: 12px; color: var(--subtext); margin: 0;">Theme:</label>
+        <label class="switch" style="margin: 0;">
+          <input type="checkbox" id="themeToggle" />
+          <span class="slider"></span>
+        </label>
+      </div>
     </div>
 
     <div class="container" style="display: none;">
@@ -50,18 +72,60 @@
       <div class="controls">
         <button onclick="load()">Refresh Data</button>
 
-        <label class="switch">
-          <input type="checkbox" id="themeToggle" />
-          <span class="slider"></span>
-        </label>
+        <!-- Admin Controls (hidden by default, shown when isAdmin === true) -->
+        <div id="adminControls" style="display: none; margin-left: 15px; display: flex; gap: 10px; align-items: center;">
+          <label for="userSelect" style="margin: 0; color: var(--subtext); font-size: 14px;">Select User:</label>
+          <select id="userSelect" onchange="onAdminUserSelect(event)" style="padding: 8px; border-radius: 4px; background: #1f2937; color: white; border: 1px solid #374151;">
+            <option value="">-- Your Dashboard --</option>
+          </select>
+          <button onclick="toggleAdminPanel()" style="padding: 8px 12px; font-size: 12px;">Manage Plants</button>
+        </div>
+
+        <!-- Admin Plant Management Panel (hidden by default) -->
+        <div id="adminPanel" style="display: none; position: fixed; top: 80px; right: 20px; background: var(--card); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; padding: 15px; width: 320px; max-height: 500px; overflow-y: auto; z-index: 1000; box-shadow: 0 4px 15px rgba(0,0,0,0.5);">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+            <h3 style="margin: 0;">Plant Management</h3>
+            <button onclick="toggleAdminPanel()" style="background: rgba(0,0,0,0.2); border: 1px solid rgba(0,0,0,0.2); color: inherit; font-size: 20px; cursor: pointer; padding: 0; width: 28px; height: 28px; border-radius: 4px; display: flex; align-items: center; justify-content: center;">✕</button>
+          </div>
+          
+          <!-- Add Plant Section -->
+          <div style="margin-bottom: 15px; padding-bottom: 15px; border-bottom: 1px solid rgba(255,255,255,0.1);">
+            <h4 style="margin: 0 0 8px 0; font-size: 12px; color: var(--subtext); text-transform: uppercase;">Add Plant</h4>
+            <input id="adminPlantName" type="text" placeholder="Plant Name" style="width: 100%; padding: 8px; margin-bottom: 8px; border-radius: 4px; background: rgba(255,255,255,0.1); color: white; border: 1px solid rgba(255,255,255,0.2); box-sizing: border-box;" />
+            <input id="adminPlantType" type="text" placeholder="Plant Type" style="width: 100%; padding: 8px; margin-bottom: 8px; border-radius: 4px; background: rgba(255,255,255,0.1); color: white; border: 1px solid rgba(255,255,255,0.2); box-sizing: border-box;" />
+            <button onclick="adminCreatePlant()" style="width: 100%; padding: 8px; background: #10b981; color: white; border: none; border-radius: 4px; cursor: pointer;">✚ Add Plant</button>
+          </div>
+          
+          <!-- Assign Plant Section -->
+          <div style="margin-bottom: 15px; padding-bottom: 15px; border-bottom: 1px solid rgba(255,255,255,0.1);">
+            <h4 style="margin: 0 0 8px 0; font-size: 12px; color: var(--subtext); text-transform: uppercase;">Assign Plant</h4>
+            <label style="display: block; font-size: 11px; color: inherit; margin-bottom: 4px;">Plant:</label>
+            <select id="assignPlantSelect" style="width: 100%; padding: 8px; margin-bottom: 10px; border-radius: 4px; background: rgba(255,255,255,0.15); color: inherit; border: 1px solid rgba(0,0,0,0.2); box-sizing: border-box;">
+              <option value="">-- Select Plant --</option>
+            </select>
+            <label style="display: block; font-size: 11px; color: inherit; margin-bottom: 4px;">User:</label>
+            <select id="assignUserSelect" style="width: 100%; padding: 8px; margin-bottom: 10px; border-radius: 4px; background: rgba(255,255,255,0.15); color: inherit; border: 1px solid rgba(0,0,0,0.2); box-sizing: border-box;">
+              <option value="">-- Select User --</option>
+            </select>
+            <button onclick="adminAssignPlant()" style="width: 100%; padding: 8px; background: #3b82f6; color: white; border: none; border-radius: 4px; cursor: pointer;">→ Assign Plant</button>
+          </div>
+          
+          <!-- Delete Plant Section -->
+          <div>
+            <h4 style="margin: 0 0 8px 0; font-size: 12px; color: var(--subtext); text-transform: uppercase;">Delete Plant</h4>
+            <div id="adminPlantList" style="font-size: 12px;">
+              <!-- List of plants will be populated here -->
+            </div>
+          </div>
+        </div>
 
         <button id="logoutBtn" onclick="handleLogout()" style="margin-left: 10px;">Logout (<span id="userEmail"></span>)</button>
       </div>
     </div>
 
     <div class="section">
-      <div style="margin-bottom: 15px;">
-        <button onclick="togglePlantForm()" style="padding: 8px 16px;">+ Add Plant</button>
+      <div id="addPlantButtonContainer" style="margin-bottom: 15px;">
+        <button id="addPlantBtn" onclick="togglePlantForm()" style="padding: 8px 16px;">+ Add Plant</button>
       </div>
       <div id="addPlantForm" style="display:none; margin-bottom:20px; padding:15px; border:1px solid #ccc; border-radius:4px;">
         <input id="newPlantName" placeholder="Plant Name" style="display:block; width:100%; margin-bottom:10px; padding:8px;" />

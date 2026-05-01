@@ -24,7 +24,18 @@ let lastSeenTimestamp = {};
 let originalDashboardMarkup = null;
 let aliasToIndex = {};
 
+// ============ ADMIN SETUP ============
+const ADMIN_EMAILS = ["grader@test.com"];
+let isAdmin = false;
+let selectedUserId = null;  // when admin selects a different user
+let allUsers = [];          // cache of all users for dropdown
+
 // ============ AUTH FUNCTIONS ============
+
+function getActiveUserId() {
+  // If admin has selected a different user, use that; otherwise use current user
+  return selectedUserId || currentUser.id;
+}
 
 function toggleSignupMode() {
   document.getElementById("authForm").style.display = 
@@ -63,7 +74,32 @@ async function handleLogin() {
     }
 
     currentUser = data.user;
+    isAdmin = ADMIN_EMAILS.includes(currentUser.email);
+    selectedUserId = null;  // reset selection
+    
+    // Auto-sync user to users table
+    try {
+      await supabaseClient
+        .from('users')
+        .upsert({
+          id: currentUser.id,
+          email: currentUser.email
+        });
+    } catch (err) {
+      console.error("Failed to sync user:", err);
+    }
+    
+    // If admin, fetch all users for dropdown
+    if (isAdmin) {
+      try {
+        allUsers = await fetchAllUsers();
+      } catch (err) {
+        console.error("Failed to fetch users:", err);
+      }
+    }
+    
     showDashboard();
+    showAdminControls();
     
     // Initialize dashboard on login
     updateStatusBar("live");
@@ -128,7 +164,32 @@ async function handleSignup() {
 
     // Auto-login after signup
     currentUser = data.user;
+    isAdmin = ADMIN_EMAILS.includes(currentUser.email);
+    selectedUserId = null;  // reset selection
+    
+    // Auto-sync user to users table
+    try {
+      await supabaseClient
+        .from('users')
+        .upsert({
+          id: currentUser.id,
+          email: currentUser.email
+        });
+    } catch (err) {
+      console.error("Failed to sync user:", err);
+    }
+    
+    // If admin, fetch all users for dropdown
+    if (isAdmin) {
+      try {
+        allUsers = await fetchAllUsers();
+      } catch (err) {
+        console.error("Failed to fetch users:", err);
+      }
+    }
+    
     showDashboard();
+    showAdminControls();
     
     // Initialize dashboard on signup
     updateStatusBar("live");
@@ -169,8 +230,11 @@ function showAuthSection() {
 function showDashboard() {
   document.getElementById("authSection").style.display = "none";
   document.querySelector(".container").style.display = "block";
-  document.querySelector(".status-bar").style.display = "block";
+  document.querySelector(".status-bar").style.display = "flex";
   document.getElementById("userEmail").textContent = currentUser.email;
+  // Hide admin controls by default
+  const adminControls = document.getElementById("adminControls");
+  if (adminControls) adminControls.style.display = "none";
 }
 
 function createPlantCard(plant, index) {
@@ -250,7 +314,7 @@ async function submitPlant() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        user_id: currentUser.id,
+        user_id: getActiveUserId(),
         plant_name: name,
         plant_type: type,
       }),
@@ -274,7 +338,8 @@ async function submitPlant() {
 // Poll /dashboard/latest and only call full `load()` when timestamps change.
 async function pollLatestForChanges() {
   try {
-    const res = await fetch(`${API_URL}/dashboard/latest?user_id=${currentUser.id}`);
+    const activeUserId = getActiveUserId();
+    const res = await fetch(`${API_URL}/dashboard/latest?user_id=${activeUserId}`);
     if (!res.ok) return;
     const data = await res.json();
     const latestMap = data.latest || {};
@@ -435,11 +500,299 @@ function setAutoRefresh(enabled) {
   );
 }
 
+// ============ ADMIN HELPERS ============
+
+async function fetchAllUsers() {
+  try {
+    // Fetch all users from the users table
+    const { data, error } = await supabaseClient
+      .from('users')
+      .select('id, email');
+    if (error) throw error;
+    return data || [];
+  } catch (err) {
+    console.error("Failed to fetch users:", err);
+    return [];
+  }
+}
+
+async function onAdminUserSelect(event) {
+  const userId = event.target.value;
+  if (!userId) {
+    selectedUserId = null;
+  } else {
+    selectedUserId = userId;
+  }
+  
+  // Clear state to prevent plant card mixing
+  aliasToIndex = {};
+  lastSeenTimestamp = {};
+  const cardsContainer = document.getElementById("plantCards");
+  if (cardsContainer) {
+    cardsContainer.innerHTML = "";
+  }
+  
+  // Reload dashboard for selected user
+  await fetchLatestOnly();
+  await load();
+}
+
+function toggleAdminPanel() {
+  const panel = document.getElementById("adminPanel");
+  if (!panel) return;
+  
+  const isNowVisible = panel.style.display === "none";
+  panel.style.display = isNowVisible ? "block" : "none";
+  
+  // Populate plant lists when opening the panel
+  if (isNowVisible) {
+    populateAdminPlantList();
+    populateAssignPlantDropdown();
+    populateAssignUserDropdown();
+  }
+}
+
+async function populateAdminPlantList() {
+  try {
+    // Fetch all plants for deletion listing
+    const { data, error } = await supabaseClient
+      .from('plants')
+      .select('id, plant_name, user_id, is_protected');
+    
+    if (error) throw error;
+    
+    const plantList = document.getElementById("adminPlantList");
+    if (!plantList) return;
+    
+    if (!data || data.length === 0) {
+      plantList.innerHTML = "<p style='color: var(--subtext); font-size: 11px;'>No plants yet</p>";
+      return;
+    }
+    
+    // Build plant list with delete buttons
+    plantList.innerHTML = "";
+    data.forEach((plant) => {
+      const isProtected = plant.is_protected || false;
+      const item = document.createElement("div");
+      item.style.cssText = "display: flex; justify-content: space-between; align-items: center; padding: 8px; background: rgba(255,255,255,0.05); border-radius: 4px; margin-bottom: 6px; font-size: 11px;";
+      
+      // Render plant name with lock icon if protected
+      const nameHtml = isProtected 
+        ? `<span>${plant.plant_name} 🔒</span>`
+        : `<span>${plant.plant_name}</span>`;
+      
+      // Render delete button - disabled if protected
+      const deleteBtn = isProtected
+        ? `<button disabled style="padding: 4px 8px; background: #9ca3af; color: white; border: none; border-radius: 3px; cursor: not-allowed; font-size: 10px; opacity: 0.6;">Delete</button>`
+        : `<button onclick="adminDeletePlant('${plant.id}')" style="padding: 4px 8px; background: #ef4444; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 10px;">Delete</button>`;
+      
+      item.innerHTML = nameHtml + deleteBtn;
+      plantList.appendChild(item);
+    });
+  } catch (err) {
+    console.error("Failed to populate plant list:", err);
+  }
+}
+
+async function populateUserDropdown() {
+  const select = document.getElementById("userSelect");
+  if (!select) return;
+  
+  // Clear existing options except the default
+  while (select.options.length > 1) {
+    select.remove(1);
+  }
+  
+  // Add all users
+  if (allUsers && allUsers.length > 0) {
+    allUsers.forEach((user) => {
+      const option = document.createElement("option");
+      option.value = user.id;
+      option.textContent = user.email;
+      select.appendChild(option);
+    });
+  }
+}
+
+async function adminCreatePlant() {
+  const name = document.getElementById("adminPlantName").value;
+  const type = document.getElementById("adminPlantType").value;
+  
+  if (!name) {
+    alert("Plant name required");
+    return;
+  }
+  
+  try {
+    const res = await fetch(`${API_URL}/plants/create`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        user_id: getActiveUserId(),
+        plant_name: name,
+        plant_type: type,
+      }),
+    });
+    
+    if (!res.ok) throw new Error("Failed to create plant");
+    
+    document.getElementById("adminPlantName").value = "";
+    document.getElementById("adminPlantType").value = "";
+    
+    // Refresh plant lists in admin panel
+    populateAdminPlantList();
+    populateAssignPlantDropdown();
+    
+    await fetchLatestOnly();
+    load();
+  } catch (err) {
+    alert("Error creating plant: " + err.message);
+  }
+}
+
+async function adminDeletePlant(plantId) {
+  if (!confirm("Delete this plant?")) return;
+  
+  try {
+    const res = await fetch(`${API_URL}/plants/delete`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ plant_id: plantId }),
+    });
+    
+    if (!res.ok) throw new Error("Failed to delete plant");
+    
+    // Refresh plant lists in admin panel
+    populateAdminPlantList();
+    populateAssignPlantDropdown();
+    
+    await fetchLatestOnly();
+    load();
+  } catch (err) {
+    alert("Error deleting plant: " + err.message);
+  }
+}
+
+async function populateAssignPlantDropdown() {
+  try {
+    // Fetch all plants to allow assignment
+    const { data, error } = await supabaseClient
+      .from('plants')
+      .select('id, plant_name, user_id');
+    
+    if (error) throw error;
+    
+    const plantSelect = document.getElementById("assignPlantSelect");
+    if (!plantSelect) return;
+    
+    // Clear existing options except the default
+    while (plantSelect.options.length > 1) {
+      plantSelect.remove(1);
+    }
+    
+    // Populate with all plants
+    if (data && data.length > 0) {
+      data.forEach((plant) => {
+        const option = document.createElement("option");
+        option.value = plant.id;
+        option.textContent = plant.plant_name;
+        plantSelect.appendChild(option);
+      });
+    }
+  } catch (err) {
+    console.error("Failed to populate plants dropdown:", err);
+  }
+}
+
+async function populateAssignUserDropdown() {
+  const userSelect = document.getElementById("assignUserSelect");
+  if (!userSelect) return;
+  
+  // Clear existing options except the default
+  while (userSelect.options.length > 1) {
+    userSelect.remove(1);
+  }
+  
+  // Populate with all users
+  if (allUsers && allUsers.length > 0) {
+    allUsers.forEach((user) => {
+      const option = document.createElement("option");
+      option.value = user.id;
+      option.textContent = user.email;
+      userSelect.appendChild(option);
+    });
+  }
+}
+
+async function adminAssignPlant() {
+  const plantId = document.getElementById("assignPlantSelect").value;
+  const userId = document.getElementById("assignUserSelect").value;
+  
+  if (!plantId || !userId) {
+    alert("Please select both a plant and a user");
+    return;
+  }
+  
+  try {
+    // Try backend endpoint first
+    const res = await fetch(`${API_URL}/plants/assign`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        plant_id: plantId,
+        user_id: userId
+      }),
+    });
+    
+    if (res.ok) {
+      // Reset dropdowns
+      document.getElementById("assignPlantSelect").value = "";
+      document.getElementById("assignUserSelect").value = "";
+      
+      // Refresh plant lists in admin panel
+      populateAdminPlantList();
+      populateAssignPlantDropdown();
+      
+      await fetchLatestOnly();
+      load();
+    } else {
+      throw new Error("Failed to assign plant");
+    }
+  } catch (err) {
+    alert("Error assigning plant: " + err.message);
+  }
+}
+
+function showAdminControls() {
+  const adminControls = document.getElementById("adminControls");
+  const addPlantBtn = document.getElementById("addPlantButtonContainer");
+  
+  if (adminControls && isAdmin) {
+    adminControls.style.display = "flex";
+    populateUserDropdown();
+    populateAssignPlantDropdown();
+    populateAssignUserDropdown();
+    
+    // Hide the add plant button in admin mode
+    if (addPlantBtn) {
+      addPlantBtn.style.display = "none";
+    }
+  } else {
+    // Show add plant button in normal user mode
+    if (addPlantBtn) {
+      addPlantBtn.style.display = "block";
+    }
+  }
+}
+
+// ============ FETCH FUNCTIONS ============
+
 // Fetch only the latest small payload to populate UI immediately
 async function fetchLatestOnly() {
   try {
+    const activeUserId = getActiveUserId();
     // Ensure the UI shell exists: fetch plants metadata (lightweight)
-    const plantsRes = await fetch(`${API_URL}/dashboard/plants?user_id=${currentUser.id}`);
+    const plantsRes = await fetch(`${API_URL}/dashboard/plants?user_id=${activeUserId}`);
     if (!plantsRes.ok) return;
     const plantsData = await plantsRes.json();
     const plants = plantsData.plants || [];
@@ -456,7 +809,7 @@ async function fetchLatestOnly() {
     }
 
     // Now fetch latest small payload and populate values
-    const res = await fetch(`${API_URL}/dashboard/latest?user_id=${currentUser.id}`);
+    const res = await fetch(`${API_URL}/dashboard/latest?user_id=${activeUserId}`);
     if (!res.ok) return;
     const data = await res.json();
     const latestMap = data.latest || {};
@@ -474,7 +827,7 @@ async function fetchLatestOnly() {
 
     // Fetch global environment readings and populate env fields on each card
     try {
-      const envRes = await fetch(`${API_URL}/dashboard/env?user_id=${currentUser.id}`);
+      const envRes = await fetch(`${API_URL}/dashboard/env?user_id=${activeUserId}`);
       if (envRes && envRes.ok) {
         const envData = await envRes.json();
         const env = envData.env || {};
@@ -510,7 +863,8 @@ async function fetchLatestOnly() {
 // immediately while full history loads in background.
 async function fetchSummaryOnly() {
   try {
-    const res = await fetch(`${API_URL}/dashboard/summary?user_id=${currentUser.id}`);
+    const activeUserId = getActiveUserId();
+    const res = await fetch(`${API_URL}/dashboard/summary?user_id=${activeUserId}`);
     if (!res.ok) return;
     const data = await res.json();
     // Build forecast summary text for up to two plants
@@ -662,7 +1016,8 @@ async function fetchSummaryOnly() {
 
 async function load() {
   try {
-    const res = await fetch(`${API_URL}/dashboard?user_id=${currentUser.id}`);
+    const activeUserId = getActiveUserId();
+    const res = await fetch(`${API_URL}/dashboard?user_id=${activeUserId}`);
     
     if (!res.ok) {
       throw new Error("Dashboard request failed");
@@ -724,7 +1079,8 @@ async function load() {
 
     // Re-apply environment values after full load so cards do not flicker back to '--'
     try {
-      const envRes = await fetch(`${API_URL}/dashboard/env?user_id=${currentUser.id}`);
+      const activeUserId = getActiveUserId();
+      const envRes = await fetch(`${API_URL}/dashboard/env?user_id=${activeUserId}`);
       if (envRes && envRes.ok) {
         const envData = await envRes.json();
         const env = envData.env || {};
@@ -991,6 +1347,18 @@ window.onload = async () => {
     // If no session but user is already set (e.g., from previous login before refresh), skip re-auth
     if (session) {
       currentUser = session.user;
+      // Restore admin status after session recovery
+      isAdmin = ADMIN_EMAILS.includes(currentUser.email);
+      selectedUserId = null;  // reset selection
+      
+      // If admin, fetch all users for dropdown
+      if (isAdmin) {
+        try {
+          allUsers = await fetchAllUsers();
+        } catch (err) {
+          console.error("Failed to fetch users:", err);
+        }
+      }
     } else if (currentUser) {
       // currentUser already set
     } else {
@@ -1000,6 +1368,7 @@ window.onload = async () => {
     
     // At this point, currentUser should be set
     showDashboard();
+    showAdminControls();
 
     // Show loading indicator
     const cardsContainer = document.getElementById("plantCards");
