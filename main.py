@@ -8,13 +8,13 @@ from backend.analysis.reasoning_engine import (
     get_latest_decision,
     run_reasoning_engine,
 )
-from visualization.plots import (
+from analysis_plots.plots import (
     plot_rolling,
     plot_rolling_with_events,
 )
-from experiments.baseline_analysis import plot_baseline
-from experiments.watering_experiment import plot_watering
-from experiments.drying_analysis import plot_time_to_dry
+from analysis_plots.baseline_analysis import plot_baseline
+from analysis_plots.watering_experiment import plot_watering
+from analysis_plots.drying_analysis import plot_time_to_dry
 
 
 def main():

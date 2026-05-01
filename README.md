@@ -9,7 +9,7 @@ This project is an IoT plant dashboard that reads plant, soil moisture, and envi
 - `backend/prediction.py` - forecast logic used by the dashboard prediction cards.
 - `docs/` - static frontend dashboard files. `index.html` loads `app.js`, `style.css`, and `config.js`.
 - `main.py` - capstone analysis script that generates plot files and prints the latest plant watering decisions.
-- `experiments/` and `visualization/` - plotting helpers used by `main.py`.
+- `analysis_plots/` - plotting helpers used by `main.py`.
 - `data/processed/` - generated plot output from `main.py`. This folder is created when the script runs and is not committed.
 - `PlantMonitoringBoard/` - microcontroller/PlatformIO code for the physical plant monitoring board.
 
@@ -135,6 +135,7 @@ For a quick code review, start with these files:
 5. `backend/app.py` - serves the dashboard API.
 6. `docs/app.js` - frontend dashboard behavior and API calls.
 7. `main.py` - reproducible plot-generation entry point.
+8. `analysis_plots/` - plot-generation code used for the capstone figures.
 
 ## Build / production notes
 
