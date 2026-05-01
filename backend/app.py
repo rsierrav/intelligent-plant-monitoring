@@ -77,10 +77,10 @@ def resolve_user_id():
     """Resolve the active user id from the request, with demo fallback."""
     user_id = request.args.get("user_id")
     if user_id:
-        return user_id
+        return user_id.strip()
 
     if DEMO_USER_ID:
-        return DEMO_USER_ID
+        return DEMO_USER_ID.strip()
 
     return None
 
@@ -232,8 +232,15 @@ def dashboard():
     if not user_id:
         return jsonify({"error": "user_id is required"}), 400
 
-    payload = get_cached_dashboard_payload(user_id)
-    return jsonify(payload)
+    try:
+        payload = get_cached_dashboard_payload(user_id)
+        return jsonify(payload)
+    except Exception as exc:
+        app.logger.exception("Dashboard request failed for user_id=%s", user_id)
+        return jsonify({
+            "error": "dashboard request failed",
+            "detail": str(exc),
+        }), 500
 
 
 @app.route("/dashboard/latest")
