@@ -2,6 +2,14 @@
 
 This project is an IoT plant dashboard that reads plant, soil moisture, and environment data from Supabase, analyzes the data with a Python reasoning engine, and displays the results in a browser dashboard.
 
+## Live demo
+
+The deployed dashboard is available here:
+
+https://plant-monitoring-ui.onrender.com/
+
+Use the live app to review the dashboard UI, authentication flow, plant cards, current readings, historical moisture chart, predictions, and watering decisions. The local setup below is mainly for running the Flask API, regenerating the figures, or reviewing the code end to end.
+
 ## What each part is for
 
 - `backend/app.py` - Flask API used by the dashboard. It exposes endpoints for dashboard data, latest readings, environment readings, and plant management.
