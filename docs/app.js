@@ -516,7 +516,17 @@ function buildForecastText(plants, prediction) {
 
   return forecastLines.length
     ? forecastLines.join("\n")
-    : "No forecast available yet.";
+    : "Forecast unavailable until this plant has at least 5 moisture readings.";
+}
+
+function hasRenderableChartData(plants, data) {
+  return (plants || []).some((plant) => {
+    const latest = data.latest?.[plant.alias];
+    const history = data.history?.[plant.alias] || [];
+    const forecast = data.prediction?.[plant.alias]?.forecast || [];
+
+    return latest?.moisture != null || history.length > 0 || forecast.length > 0;
+  });
 }
 
 function setAutoRefresh(enabled) {
@@ -1052,12 +1062,11 @@ async function load() {
 
     updateLastPlantReadingTime(data.latest || {});
 
-    // If plants exist but readings are still missing, keep rendering the dashboard.
-    const hasAnyData = Object.values(data.latest || {}).some((v) => {
-      return v && v.moisture != null;
-    });
+    // Forecasts can still be useful when readings are stale, so show the chart
+    // whenever there is latest, history, or prediction data to render.
+    const canRenderChart = hasRenderableChartData(plants, data);
     
-    if (!hasAnyData) {
+    if (!canRenderChart) {
       document.querySelector("#chart").parentElement.style.display = "none";
       document.getElementById("forecastText").innerText = "";
     } else {
@@ -1115,7 +1124,7 @@ async function load() {
       // ignore env refresh errors
     }
 
-    if (hasAnyData) {
+    if (canRenderChart) {
       buildChart(plants, data);
     }
   } catch (error) {
@@ -1211,7 +1220,7 @@ function updatePlant(index, status, moisture, pred, sensorData) {
     : "N/A";
   const etaText = typeof pred.eta_hours === "number" && !Number.isNaN(pred.eta_hours)
     ? `${pred.eta_hours.toFixed(1)} hrs (~${eta})`
-    : "Forecast unavailable";
+    : "Forecast needs at least 5 moisture readings";
   const readingTime = sensorData?.timestamp
     ? new Date(sensorData.timestamp).toLocaleString()
     : "--";
