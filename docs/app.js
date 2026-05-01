@@ -63,6 +63,22 @@ async function handleLogin() {
 
     currentUser = data.user;
     showDashboard();
+    
+    // Initialize dashboard on login
+    updateStatusBar("live");
+    
+    console.log("[LOGIN] Starting initialization...", new Date().toLocaleTimeString());
+    try {
+      await fetchLatestOnly();
+      await load();
+    } catch (err) {
+      console.error("[LOGIN] Initialization failed:", err);
+    }
+    console.log("[LOGIN] Dashboard initialized", new Date().toLocaleTimeString());
+    
+    // Enable auto-refresh
+    autoRefreshEnabled = true;
+    setAutoRefresh(true);
   } catch (err) {
     showAuthError(err.message || "Login failed");
     button.innerText = "Login";
@@ -113,6 +129,22 @@ async function handleSignup() {
     // Auto-login after signup
     currentUser = data.user;
     showDashboard();
+    
+    // Initialize dashboard on signup
+    updateStatusBar("live");
+    
+    console.log("[SIGNUP] Starting initialization...", new Date().toLocaleTimeString());
+    try {
+      await fetchLatestOnly();
+      await load();
+    } catch (err) {
+      console.error("[SIGNUP] Initialization failed:", err);
+    }
+    console.log("[SIGNUP] Dashboard initialized", new Date().toLocaleTimeString());
+    
+    // Enable auto-refresh
+    autoRefreshEnabled = true;
+    setAutoRefresh(true);
   } catch (err) {
     showAuthError(err.message || "Signup failed");
     button.innerText = "Sign Up";
@@ -141,7 +173,6 @@ function showDashboard() {
   document.querySelector(".container").style.display = "block";
   document.querySelector(".status-bar").style.display = "block";
   document.getElementById("userEmail").textContent = currentUser.email;
-  load();
 }
 
 function createPlantCard(plant, index) {
@@ -598,8 +629,10 @@ async function fetchSummaryOnly() {
 }
 
 async function load() {
+  console.log("[LOAD] Starting dashboard load...", new Date().toLocaleTimeString());
   try {
     const res = await fetch(`${API_URL}/dashboard?user_id=${currentUser.id}`);
+    console.log("[LOAD] Response received after", new Date().toLocaleTimeString());
     if (!res.ok) {
       throw new Error("Dashboard request failed");
     }
@@ -889,24 +922,51 @@ window.onload = async () => {
   // Check for existing session using Supabase
   try {
     const { data: { session } } = await supabaseClient.auth.getSession();
+    console.log("[ONLOAD] Session check complete. Session exists:", !!session);
     
+    // If no session but user is already set (e.g., from previous login before refresh), skip re-auth
     if (session) {
       currentUser = session.user;
-      showDashboard();
-
-      // Initialize status bar
-      updateStatusBar("live");
-
-      // fetchSummaryOnly(); // disabled to avoid early chart rebuild flicker
-      // fetchLatestOnly(); // temporarily disabled to avoid partial UI flicker
-      await load(); // load full dashboard (chart etc.) and wait before proceeding
-
-      // Always enable continuous auto-refresh (no UI toggle)
-      autoRefreshEnabled = true;
-      setAutoRefresh(true);
+      console.log("[ONLOAD] Current user set from session:", currentUser.id);
+    } else if (currentUser) {
+      console.log("[ONLOAD] Current user already set, skipping session check. User:", currentUser.id);
     } else {
+      console.log("[ONLOAD] No session found, showing auth");
       showAuthSection();
+      return;
     }
+    
+    // At this point, currentUser should be set
+    showDashboard();
+
+    // Show loading indicator
+    const cardsContainer = document.getElementById("plantCards");
+    cardsContainer.innerHTML = '<div style="padding: 40px; text-align: center;">Loading plants...</div>';
+
+    // Initialize status bar
+    updateStatusBar("live");
+
+    console.log("[INIT] Starting to fetch latest only...", new Date().toLocaleTimeString());
+    // Fetch lightweight latest data first for instant UI response
+    try {
+      await fetchLatestOnly();
+    } catch (err) {
+      console.error("[INIT] fetchLatestOnly failed:", err);
+    }
+    
+    console.log("[INIT] Latest data fetched, now loading full dashboard...", new Date().toLocaleTimeString());
+    // Load full dashboard (wait for it this time to ensure initial plants appear)
+    try {
+      await load();
+    } catch (err) {
+      console.error("[INIT] load() failed:", err);
+    }
+    
+    console.log("[INIT] Dashboard loaded", new Date().toLocaleTimeString());
+    
+    // Always enable continuous auto-refresh (no UI toggle)
+    autoRefreshEnabled = true;
+    setAutoRefresh(true);
   } catch (e) {
     console.error("Auth error:", e);
     showAuthSection();

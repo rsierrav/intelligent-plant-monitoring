@@ -19,17 +19,17 @@ def home():
 
 
 DEMO_USER_ID = os.getenv("DEMO_USER_ID")
-MIN_HISTORY_HOURS = 7 * 24
+MIN_HISTORY_HOURS = 7 * 24  # 168 hours = 7 days
 MIN_FORECAST_MINUTES = 7 * 24 * 60
 HISTORY_HOURS = max(
     MIN_HISTORY_HOURS,
-    int(os.getenv("DASHBOARD_HISTORY_HOURS", str(MIN_HISTORY_HOURS)))
+    int(os.getenv("DASHBOARD_HISTORY_HOURS", "168"))  # 7 days, can be overridden to 336 (14 days)
 )
 FORECAST_HORIZON_MINUTES = max(
     MIN_FORECAST_MINUTES,
     int(os.getenv("DASHBOARD_FORECAST_MINUTES", str(MIN_FORECAST_MINUTES)))
 )
-CACHE_TTL_SECONDS = int(os.getenv("DASHBOARD_CACHE_TTL_SECONDS", "10"))
+CACHE_TTL_SECONDS = int(os.getenv("DASHBOARD_CACHE_TTL_SECONDS", "60"))
 dashboard_cache = {}
 
 
@@ -215,13 +215,17 @@ def get_cached_dashboard_payload(user_id):
     now = time.time()
     cached = dashboard_cache.get(user_id)
     if cached and (now - cached["time"]) < CACHE_TTL_SECONDS:
+        elapsed = now - cached["time"]
+        print(f"[CACHE HIT] user_id={user_id}, elapsed={elapsed:.1f}s", flush=True)
         return cached["data"]
 
+    print(f"[CACHE MISS] user_id={user_id}, computing...", flush=True)
     payload = build_dashboard_payload(user_id)
     dashboard_cache[user_id] = {
         "time": now,
         "data": payload,
     }
+    print(f"[CACHE STORED] user_id={user_id}", flush=True)
     return payload
 
 

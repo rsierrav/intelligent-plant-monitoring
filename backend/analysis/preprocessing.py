@@ -186,6 +186,30 @@ def get_latest_raw_moisture_by_plant(user_id):
             "timestamp": ts.isoformat(),
             }
 
+    # Try to fetch the latest environment reading (global, not per-plant)
+    env_row = None
+    try:
+        resp = supabase.table("environment_readings") \
+            .select("timestamp, temperature, humidity, light_level") \
+            .order("timestamp", desc=True) \
+            .limit(1) \
+            .execute()
+        data = resp.data or []
+        if data:
+            env_row = data[0]
+    except Exception:
+        env_row = None
+
+    env_temp = float(env_row.get("temperature")) if env_row and env_row.get("temperature") is not None else None
+    env_hum = float(env_row.get("humidity")) if env_row and env_row.get("humidity") is not None else None
+    env_light = float(env_row.get("light_level")) if env_row and env_row.get("light_level") is not None else None
+
+    # Attach environment readings to each plant's latest entry so the frontend can show them
+    for k in latest_by_plant.keys():
+        latest_by_plant[k]["temperature"] = env_temp
+        latest_by_plant[k]["humidity"] = env_hum
+        latest_by_plant[k]["light"] = env_light
+
     return latest_by_plant
 
 
