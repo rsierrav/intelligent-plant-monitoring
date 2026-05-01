@@ -1,7 +1,10 @@
-import matplotlib.pyplot as plt
 import os
+import matplotlib
 
-PLOT_DIR = "data/processed"
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+PLOT_DIR = "figures"
 
 
 def plot_time_to_dry(df):

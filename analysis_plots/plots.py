@@ -1,7 +1,10 @@
 import os
+import matplotlib
+
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-PLOT_DIR = "data/processed"
+PLOT_DIR = "figures"
 os.makedirs(PLOT_DIR, exist_ok=True)
 
 

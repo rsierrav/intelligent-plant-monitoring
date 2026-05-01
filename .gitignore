@@ -5,6 +5,8 @@ __pycache__/
 
 data/raw/
 data/processed/
+backend/data/
+backend/analysis/data/
 
 .DS_Store
 Thumbs.db

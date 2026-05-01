@@ -51,7 +51,19 @@ def _get_user_plants(user_id, max_retries=3):
 
 
 def _build_plant_alias_map(user_id):
-    plants = _get_user_plants(user_id)
+    try:
+        plants = _get_user_plants(user_id)
+    except Exception:
+        cached_df = _load_cached_raw_data(user_id)
+        if cached_df is None or "plant_id" not in cached_df.columns:
+            raise
+
+        plant_ids = list(dict.fromkeys(cached_df["plant_id"].dropna()))
+        return {
+            plant_id: DEFAULT_PLANT_ALIASES[idx]
+            for idx, plant_id in enumerate(plant_ids[:len(DEFAULT_PLANT_ALIASES)])
+        }
+
     if not plants:
         return {}
 

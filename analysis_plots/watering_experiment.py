@@ -1,8 +1,11 @@
 import os
+import matplotlib
+
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 SPIKE_THRESHOLD = 2
-PLOT_DIR = "data/processed"
+PLOT_DIR = "figures"
 
 
 def detect_spikes(rate_df):
